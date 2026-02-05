@@ -1,0 +1,252 @@
+:root {
+  --bg: #f5f5f8;
+  --panel: #ffffff;
+  --text: #111827;
+  --muted: #6b7280;
+  --accent: #2563eb;
+  --chip: #e5e7eb;
+  --border: #d1d5db;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Arial;
+}
+
+/* Make law coverage percentages stand out */
+.law-percent {
+  font-size: 0.9rem;      /* small text */
+  font-weight: 700;       /* bold but not huge */
+  color: #cc0000;         /* red */
+  margin-right: 4px;
+}
+
+
+.law-label-text {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #444;
+}
+
+
+.container {
+  max-width: 980px;
+  margin: 40px auto;
+  padding: 0 16px 48px;
+}
+
+h1 {
+  margin: 0 0 8px;
+  font-size: 28px;
+}
+
+h2 {
+  margin: 24px 0 8px;
+  font-size: 22px;
+}
+
+h3 {
+  margin: 16px 0 8px;
+  font-size: 18px;
+}
+
+.subtitle {
+  margin: 0 0 24px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.panel {
+  background: var(--panel);
+  border-radius: 12px;
+  padding: 16px 16px 12px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.04);
+  border: 1px solid var(--border);
+  margin-bottom: 24px;
+}
+
+.details {
+  background: var(--panel);
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.04);
+  border: 1px solid var(--border);
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.row.two-col {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  margin-top: 16px;
+}
+
+.row.two-col .col {
+  flex: 1;
+  min-width: 0;
+}
+
+label {
+  font-size: 14px;
+}
+
+select {
+  flex: 1;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #ffffff;
+  font-size: 14px;
+}
+
+button {
+  border-radius: 8px;
+  border: none;
+  padding: 6px 12px;
+  font-size: 14px;
+  cursor: pointer;
+  background: var(--accent);
+  color: white;
+  font-weight: 500;
+}
+
+button:hover {
+  opacity: 0.9;
+}
+
+.small-btn {
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.small-btn.hidden {
+  display: none;
+}
+
+.small-btn.linkish {
+  background: none;
+  border: none;
+  color: var(--accent);
+  padding: 0;
+  margin-top: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.small-btn.linkish:hover {
+  text-decoration: underline;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.small {
+  font-size: 12px;
+}
+
+.policy {
+  white-space: pre-wrap;
+  background: #f9fafb;
+  border-radius: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  max-height: 260px;
+  overflow: hidden;
+  font-size: 13px;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.card {
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #f9fafb;
+  border: 1px solid var(--border);
+}
+
+.card-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+  font-size: 14px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--chip);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.chip strong {
+  margin-right: 4px;
+}
+
+.hidden {
+  display: none;
+}
+
+/* Class description layout */
+.class-desc-short,
+.class-desc-full {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.class-desc-short.hidden,
+.class-desc-full.hidden {
+  display: none;
+}
+
+.class-desc-full {
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+/* Law description pieces */
+.law-desc {
+  margin-top: 4px;
+}
+
+.law-desc strong {
+  font-weight: 700;
+}
+
+/* “Related law” label in missing-classes cards */
+.related-law {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+/* Law coverage cards side-by-side */
+.law-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.law-cards .card {
+  flex: 1 1 260px;
+}

@@ -1,0 +1,24 @@
+/* add to static/style.css (or keep your current styles) */
+.row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
+}
+select {
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  min-width: 320px;
+}
+button#btnLoad {
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: #1d4ed8;
+  color: white;
+  cursor: pointer;
+}
+.small { font-size: 12px; }

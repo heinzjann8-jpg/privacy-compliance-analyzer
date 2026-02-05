@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<catalog prefer="public" xmlns="urn:oasis:names:tc:entity:xmlns:xml:catalog">
+    <uri id="Imports Wizard Entry" name="http://yourdomain.org/ontology/laws" uri="file:/C:/Users/heinz/Desktop/etc/Work/code/TAMUCT_IoT_Privacy_ResearchWork/TAMUCT_IoT_Privacy_ResearchWork/Sesha%20(cali%20and%20org)/legal_knowledge_graph_FINAL_STRUCTURED_LAW_LINKED.owl"/>
+    <uri id="Imports Wizard Entry" name="http://example.org/onto.owl" uri="file:/C:/Users/heinz/Desktop/etc/Work/code/TAMUCT_IoT_Privacy_ResearchWork/TAMUCT_IoT_Privacy_ResearchWork/Simbu%20(nistir%20and%20plaw)/finaldocs/nist8259.owl"/>
+    <uri id="Imports Wizard Entry" name="http://example.org/onto.owl" uri="n8259a.owl"/>
+    <uri id="Imports Wizard Entry" name="http://example.org/onto.owl" uri="file:/C:/Users/heinz/Desktop/etc/Work/code/TAMUCT_IoT_Privacy_ResearchWork/TAMUCT_IoT_Privacy_ResearchWork/Simbu%20(nistir%20and%20plaw)/finaldocs/nist8259.owl"/>
+    <uri id="Imports Wizard Entry" name="http://yourdomain.org/ontology/laws" uri="file:/C:/Users/mcgar/Downloads/Sesha/Sesha/legal_knowledge_graph_FINAL_STRUCTURED_LAW_LINKED.owl"/>
+    <group id="Folder Repository, directory=, recursive=true, Auto-Update=true, version=2" prefer="public" xml:base=""/>
+</catalog>

@@ -1,0 +1,26 @@
+{
+  "ontology_path": "data/knowledge_graph_n8259a/n8259a.owl",
+  "manufacturer_class_iri": "http://example.org/onto.owl#Manufacturer",
+  "policy_property_iri": "http://example.org/onto.owl#policy_description",
+   "top_k": 8,
+
+  "law_annotation_predicates": [
+    "http://www.w3.org/2000/01/rdf-schema#hasLaw"
+  ],
+  "laws": [
+  {
+    "id": "OR_HB_2395",
+    "label": "Oregon HB 2395",
+    "keywords": ["HB 2395", "Oregon HB 2395"]
+  },
+   {
+      "id": "CA_SB_327",
+      "label": "California SB-327",
+      "keywords": ["SB-327", "California", "connected devices"]
+    }
+  ],
+  "coverage_threshold": 0.20,
+
+  "similarity_method": "tfidf",              
+  "embedding_model_name": "all-MiniLM-L6-v2" 
+}

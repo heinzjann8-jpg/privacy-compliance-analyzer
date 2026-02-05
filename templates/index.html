@@ -1,0 +1,523 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Privacy Policy Compliance Analyzer</title>
+    <link rel="stylesheet" href="/static/style.css">
+  </head>
+  <body>
+    <div class="container">
+      <h1>Privacy Policy Compliance Analyzer</h1>
+      <p class="subtitle">
+        Select a manufacturer to view its privacy policy, see the top matching ontology classes,
+        and check coverage under Oregon and California laws.
+      </p>
+
+      <!-- Manufacturer selector -->
+      <div class="panel">
+        <label for="manufacturerSelect"><strong>Manufacturer:</strong></label>
+        <div class="row">
+          <select id="manufacturerSelect"></select>
+          <button id="btnLoad">Classify</button>
+        </div>
+        <div class="muted small" id="countNote"></div>
+      </div>
+
+      <!-- Details -->
+      <div id="details" class="details hidden">
+        <h2 id="mName"></h2>
+
+        <h3>Policy Description</h3>
+        <pre id="policy" class="policy"></pre>
+        <button id="togglePolicy" class="small-btn hidden">Read more</button>
+
+        <h3 id="lawHeader">Law Coverage</h3>
+        <div id="laws" class="cards law-cards"></div>
+
+        <!-- Top & Missing classes side by side -->
+        <div class="row two-col">
+          <div class="col">
+            <h3 id="classHeader">Matching Classes</h3>
+            <div id="classes" class="cards"></div>
+          </div>
+          <div class="col">
+            <h3 id="missingHeader">Missing Classes</h3>
+            <div id="missingClasses" class="cards"></div>
+          </div>
+        </div>
+      </div>
+            <!-- Add Manufacturer (bottom of page) -->
+      <div class="panel" style="margin-top: 24px;">
+        <h2>Add a Manufacturer</h2>
+
+        <div class="field">
+          <label for="newName"><strong>Name</strong></label>
+          <input id="newName" type="text" placeholder="e.g., Apple"
+                 style="width:100%; padding:6px 8px; margin-top:4px; border-radius:8px; border:1px solid var(--border);" />
+        </div>
+
+        <div class="field" style="margin-top: 12px;">
+          <label for="newPolicy"><strong>Policy description</strong></label>
+          <textarea id="newPolicy" rows="4"
+            placeholder="Paste the relevant privacy policy text here"
+            style="width:100%; padding:6px 8px; margin-top:4px; border-radius:8px; border:1px solid var(--border);"></textarea>
+        </div>
+      <div class="field" style="margin-top: 12px;">
+          <label for="pdfFile"><strong>Upload policy PDF (optional)</strong></label>
+          <input id="pdfFile" type="file" accept="application/pdf" style="display:block; margin-top:6px;" />
+          <button id="btnExtractPdf" type="button" style="margin-top:8px;">Extract text from PDF</button>
+          <div id="pdfStatus" class="small muted" style="margin-top: 6px;"></div>
+      </div>
+
+        <button id="btnAdd" style="margin-top: 12px;">Save Manufacturer</button>
+        <div id="addStatus" class="small muted" style="margin-top: 8px;"></div>
+      </div>
+    </div>
+
+    <script>
+      function el(id){ return document.getElementById(id); }
+
+      let policyFullText = "";
+      let policyTruncatedText = "";
+      let policyExpanded = false;
+
+      const CLASS_THRESHOLD = 0.0; // backend decides; keep 0 to not filter
+
+      function makeTruncated(text, maxLen) {
+        if (!text) return "";
+        if (text.length <= maxLen) return text;
+        return text.slice(0, maxLen) + "...";
+      }
+
+      function truncateText(str, maxLen) {
+        if (!str) return "";
+        if (str.length <= maxLen) return str;
+        return str.slice(0, maxLen) + "...";
+      }
+
+      function statusFromCoverage(pct, numAbove, numClasses) {
+        if (!numClasses || pct === 0 || numAbove === 0) return "Missing";
+        if (pct < 40) return "Partially";
+        if (pct < 80) return "Mostly";
+        return "Fully";
+      }
+
+      // Build short vs full HTML for a class description,
+      // and bold Oregon / California law names when present.
+      function buildLawSections(desc) {
+        if (!desc) {
+          return {
+            shortHtml: '<div class="law-desc">(no description)</div>',
+            fullHtml: '<div class="law-desc">(no description)</div>'
+          };
+        }
+
+        const pieces = desc.split(/(?<=[.!?])\s+|[\n\r]+|;+/, -1);
+        const oreSegs = [];
+        const caSegs  = [];
+
+        pieces.forEach(p => {
+          const pl = p.toLowerCase().trim();
+          if (!pl) return;
+
+          const isOre = pl.includes("oregon hb 2395") || pl.includes("hb 2395") || pl.includes("oregon");
+          const isCa  = pl.includes("california sb-327") || pl.includes("sb-327") || pl.includes("california");
+
+          if (isOre) oreSegs.push(p.trim());
+          if (isCa) caSegs.push(p.trim());
+        });
+
+        let shortParts = [];
+        let fullParts  = [];
+
+        if (oreSegs.length) {
+          const shortOre = truncateText(oreSegs[0], 120);
+          shortParts.push(
+            `<div class="law-desc"><strong>Oregon HB 2395</strong>: ${shortOre}</div>`
+          );
+          fullParts.push(
+            `<div class="law-desc"><strong>Oregon HB 2395</strong>: ${oreSegs.join(" ")}</div>`
+          );
+        }
+
+        if (caSegs.length) {
+          const shortCa = truncateText(caSegs[0], 120);
+          shortParts.push(
+            `<div class="law-desc"><strong>California SB-327</strong>: ${shortCa}</div>`
+          );
+          fullParts.push(
+            `<div class="law-desc"><strong>California SB-327</strong>: ${caSegs.join(" ")}</div>`
+          );
+        }
+
+        // If we didn't detect explicit OR/CA mentions, just use the raw description.
+        if (!shortParts.length) {
+          const safe = desc || "(no description)";
+          const truncated = truncateText(safe, 120);
+          return {
+            shortHtml: `<div class="law-desc">${truncated}</div>`,
+            fullHtml: `<div class="law-desc">${safe}</div>`
+          };
+        }
+
+        return {
+          shortHtml: shortParts.join(""),
+          fullHtml: fullParts.join("")
+        };
+      }
+
+      async function loadDropdown() {
+        const res = await fetch('/list');
+        const items = await res.json();
+        const sel = el('manufacturerSelect');
+        sel.innerHTML = '';
+
+        if (!items.length){
+          const opt = document.createElement('option');
+          opt.textContent = '(No manufacturers found)';
+          opt.value = '';
+          sel.appendChild(opt);
+          el('countNote').textContent = '';
+          return;
+        }
+
+        items.forEach(m => {
+          const opt = document.createElement('option');
+          opt.value = m.iri;
+          opt.textContent = m.name;
+          sel.appendChild(opt);
+        });
+
+        el('countNote').textContent = `${items.length} manufacturer(s)`;
+        // Auto-load first manufacturer
+        sel.value = items[0].iri;
+        loadDetail();
+      }
+
+      async function loadDetail()  {
+        const sel = el('manufacturerSelect');
+        const iri = sel.value;
+        if (!iri) return;
+
+        const res = await fetch('/detail?iri=' + encodeURIComponent(iri));
+        const data = await res.json();
+
+        el('details').classList.remove('hidden');
+        el('mName').textContent = data.name || '(no label)';
+
+        // Policy text + main "Read more"
+        policyFullText = data.policy || '(no policy_description found)';
+        policyTruncatedText = makeTruncated(policyFullText, 500);
+        policyExpanded = false;
+
+        const policyEl = el('policy');
+        const toggleBtn = el('togglePolicy');
+
+        if (policyFullText.length > 500) {
+          policyEl.textContent = policyTruncatedText;
+          toggleBtn.classList.remove('hidden');
+          toggleBtn.textContent = "Read more";
+        } else {
+          policyEl.textContent = policyFullText;
+          toggleBtn.classList.add('hidden');
+        }
+
+        // Law coverage
+        const lawsDiv = el('laws');
+        lawsDiv.innerHTML = '';
+        const lawHeader = el('lawHeader');
+
+        const lawCoverage = data.law_coverage || [];
+        const missingLaws = new Set(data.missing_laws || []);
+
+        if (!lawCoverage.length) {
+          lawsDiv.innerHTML = '<p class="muted">No law coverage information.</p>';
+          lawHeader.style.display = '';
+        } else {
+          lawHeader.style.display = '';
+          lawCoverage.forEach(l => {
+            const isMissing = missingLaws.has(l.id) || l.coverage_percent === 0;
+            const statusText = statusFromCoverage(
+              l.coverage_percent,
+              l.num_above_threshold,
+              l.num_classes
+            );
+
+            const card = document.createElement('div');
+            card.className = 'card';
+            card.innerHTML = `
+              <div class="card-title">${l.label}</div>
+              <div class="row">
+                <span class="chip">
+                  <span class="law-percent">${l.coverage_percent}%</span>
+                  <span class="law-label-text">coverage</span>
+                </span>
+              </div>
+              <div class="row">
+                <strong>Status:</strong>&nbsp;<span>${statusText}</span>
+              </div>
+              <div class="small muted">
+                ${l.num_above_threshold}/${l.num_classes} related classes above similarity threshold
+              </div>
+            `;
+
+            if (isMissing) {
+              card.querySelector('.chip').style.background = '#fee2e2';
+            }
+            lawsDiv.appendChild(card);
+          });
+        }
+
+        // Top Classes
+        const classesDiv = el('classes');
+        const classHeader = el('classHeader');
+        classesDiv.innerHTML = '';
+
+        let classes = data.suggested_classes || [];
+        // backend already applied threshold; we leave CLASS_THRESHOLD=0
+
+        if (!classes.length) {
+          classHeader.style.display = 'none';
+          classesDiv.style.display = 'none';
+        } else {
+          classHeader.style.display = '';
+          classesDiv.style.display = '';
+          classes.forEach(c => {
+            const desc = c.class_desc || "";
+            const { shortHtml, fullHtml } = buildLawSections(desc);
+
+            const card = document.createElement('div');
+            card.className = 'card';
+            card.innerHTML = `
+              <div class="card-title">${c.class_label}</div>
+              <div class="small muted class-desc-short">
+                ${shortHtml}
+              </div>
+              <button class="small-btn linkish class-desc-toggle">Read more</button>
+              <div class="small muted class-desc-full hidden">
+                ${fullHtml}
+              </div>
+            `;
+
+            const shortDiv = card.querySelector('.class-desc-short');
+            const fullDiv = card.querySelector('.class-desc-full');
+            const btn = card.querySelector('.class-desc-toggle');
+
+            // If short and full are the same, hide the toggle
+            if (shortHtml.trim() === fullHtml.trim()) {
+              btn.classList.add('hidden');
+            } else {
+              btn.addEventListener('click', () => {
+                const showingFull = !fullDiv.classList.contains('hidden');
+                if (showingFull) {
+                  fullDiv.classList.add('hidden');
+                  shortDiv.classList.remove('hidden');
+                  btn.textContent = 'Read more';
+                } else {
+                  fullDiv.classList.remove('hidden');
+                  shortDiv.classList.add('hidden');
+                  btn.textContent = 'Show less';
+                }
+              });
+            }
+
+            classesDiv.appendChild(card);
+          });
+        }
+
+        // Missing Classes
+        const missingDiv = el('missingClasses');
+        const missingHeader = el('missingHeader');
+        missingDiv.innerHTML = '';
+
+        // Raw list from backend (may contain duplicates per law)
+        const rawMissing = data.missing_classes || [];
+
+        // Deduplicate by class_iri (fallback to class_label if needed)
+        const missingByClass = new Map();
+        rawMissing.forEach(mc => {
+          const key = mc.class_iri || mc.class_label;
+          if (!missingByClass.has(key)) {
+            missingByClass.set(key, mc);
+          }
+        });
+
+        const missingClasses = Array.from(missingByClass.values());
+
+        if (!missingClasses.length) {
+          // No missing classes for this manufacturer under these laws
+          missingHeader.style.display = '';
+          missingDiv.innerHTML = '<p class="muted small">(No missing classes under these laws.)</p>';
+        } else {
+          missingHeader.style.display = '';
+          missingDiv.style.display = '';
+          missingClasses.forEach(mc => {
+            const desc = mc.class_desc || "";
+            const { shortHtml, fullHtml } = buildLawSections(desc);
+
+            const card = document.createElement('div');
+            card.className = 'card';
+            card.innerHTML = `
+              <div class="card-title">${mc.class_label}</div>
+              <div class="small muted class-desc-short">
+                ${shortHtml}
+              </div>
+              <div class="small muted class-desc-full hidden">
+                ${fullHtml}
+              </div>
+              <button class="small-btn linkish class-desc-toggle">Read more</button>
+              <div class="chip">
+                <strong>Law:</strong>&nbsp;${mc.law_label || mc.law_id || ''}
+              </div>
+            `;
+
+            const shortDiv = card.querySelector('.class-desc-short');
+            const fullDiv = card.querySelector('.class-desc-full');
+            const btn = card.querySelector('.class-desc-toggle');
+
+            // If short and full are the same, hide the toggle
+            if (shortHtml.trim() === fullHtml.trim()) {
+              btn.classList.add('hidden');
+            } else {
+              btn.addEventListener('click', () => {
+                const showingFull = !fullDiv.classList.contains('hidden');
+                if (showingFull) {
+                  fullDiv.classList.add('hidden');
+                  shortDiv.classList.remove('hidden');
+                  btn.textContent = 'Read more';
+                } else {
+                  fullDiv.classList.remove('hidden');
+                  shortDiv.classList.add('hidden');
+                  btn.textContent = 'Show less';
+                }
+              });
+            }
+
+            missingDiv.appendChild(card);
+          });
+        }
+      }
+      async function addManufacturer() {
+        const nameInput = el('newName');
+        const policyInput = el('newPolicy');
+        const statusEl = el('addStatus');
+
+        if (!nameInput || !policyInput || !statusEl) {
+          // Form doesn't exist on this page
+          return;
+        }
+
+        const name = nameInput.value.trim();
+        const policy = policyInput.value.trim();
+        statusEl.textContent = "";
+
+        if (!name || !policy) {
+          statusEl.textContent = "Please enter both a name and a policy description.";
+          return;
+        }
+
+        try {
+          const res = await fetch("/add_manufacturer", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name, policy })
+          });
+
+          const data = await res.json();
+
+          if (!res.ok) {
+            statusEl.textContent = data.error || "Error saving manufacturer.";
+            return;
+          }
+
+          statusEl.textContent = "Manufacturer added successfully.";
+
+          // Clear the form
+          nameInput.value = "";
+          policyInput.value = "";
+
+          // Reload dropdown and auto-select new manufacturer
+          await loadDropdown();
+          el('manufacturerSelect').value = data.iri;
+          await loadDetail();
+        } catch (err) {
+          console.error(err);
+          statusEl.textContent = "Network error while saving manufacturer.";
+        }
+      }
+    async function extractPdfToPolicy() {
+  const fileInput = el('pdfFile');
+  const statusEl = el('pdfStatus');
+  const policyBox = el('newPolicy');
+
+  statusEl.textContent = "";
+
+  if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+    statusEl.textContent = "Please choose a PDF file first.";
+    return;
+  }
+
+  const file = fileInput.files[0];
+  const formData = new FormData();
+  formData.append("file", file);
+
+  try {
+    statusEl.textContent = "Extracting text...";
+    const res = await fetch("/extract_pdf", {
+      method: "POST",
+      body: formData
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      statusEl.textContent = data.error || "Error extracting PDF text.";
+      return;
+    }
+
+    if (data.error && !data.text) {
+      // backend may return error message but 200
+      statusEl.textContent = data.error;
+      return;
+    }
+
+    const extracted = (data.text || "").trim();
+    if (!extracted) {
+      statusEl.textContent = "No text extracted.";
+      return;
+    }
+
+    policyBox.value = extracted;
+    statusEl.textContent = `Extracted ${extracted.length.toLocaleString()} characters into the policy box.`;
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = "Network/server error extracting PDF.";
+  }
+}
+
+      // Main policy "Read more" toggle
+      el('togglePolicy').onclick = function () {
+        const policyEl = el('policy');
+        const toggleBtn = el('togglePolicy');
+
+        if (!policyExpanded) {
+          policyEl.textContent = policyFullText;
+          toggleBtn.textContent = "Show less";
+          policyExpanded = true;
+        } else {
+          policyEl.textContent = policyTruncatedText;
+          toggleBtn.textContent = "Read more";
+          policyExpanded = false;
+        }
+      };
+
+      el('btnLoad').onclick = loadDetail;
+      el('manufacturerSelect').addEventListener('change', loadDetail);
+      el('btnAdd').onclick = addManufacturer;
+      el('btnExtractPdf').onclick = extractPdfToPolicy;
+
+      loadDropdown();
+    </script>
+  </body>
+</html>
