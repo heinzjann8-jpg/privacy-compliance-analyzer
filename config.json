@@ -1,5 +1,5 @@
 {
-  "ontology_path": "data/knowledge_graph_n8259a/n8259a.owl",
+  "ontology_path": "C:/Users/heinz/Desktop/etc/Work/code/TAMUCT_IoT_Privacy_ResearchWork/TAMUCT_IoT_Privacy_ResearchWork/Heinrick (Both)/checkertest/data/knowledge_graph_n8259a/finalmerged.rdf",
   "manufacturer_class_iri": "http://example.org/onto.owl#Manufacturer",
   "policy_property_iri": "http://example.org/onto.owl#policy_description",
    "top_k": 8,
@@ -16,11 +16,21 @@
    {
       "id": "CA_SB_327",
       "label": "California SB-327",
-      "keywords": ["SB-327", "California", "connected devices"]
+      "keywords": ["SB-327", "California"]
+    },
+    {
+      "id": "PL_116-207",
+      "label": "Public Law 116-207",
+      "keywords": ["PL 116-207", "Federal", "Public Law"]
+    },
+    {
+      "id": "NISTIR_8259",
+      "label": "NISTIR 8259",
+      "keywords": ["NISTIR 8259", "NIST"]
     }
   ],
   "coverage_threshold": 0.20,
 
-  "similarity_method": "tfidf",              
+  "similarity_method": "bert",              
   "embedding_model_name": "all-MiniLM-L6-v2" 
 }
