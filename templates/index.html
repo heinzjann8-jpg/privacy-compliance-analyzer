@@ -7,49 +7,28 @@
     <link rel="stylesheet" href="/static/style.css">
   </head>
   <body>
+  <button id="darkModeToggle">🌙</button>
     <div class="container">
-      <h1>Privacy Policy Compliance Analyzer</h1>
+      <h1 style="text-align: center;">Privacy Policy Compliance Analyzer</h1>
       <p class="subtitle">
-        Select a manufacturer to view its privacy policy, see the top matching ontology classes,
-        and check coverage under Oregon and California laws.
+        Select a manufacturer & corresponding Privacy Policy from the list or input your own manufacturer and Privacy Policy to and check coverage
+         under California, Oregon, and federal laws and standards (NISTIR 8259 & PL 116-207).
       </p>
 
       <!-- Manufacturer selector -->
       <div class="panel">
-        <label for="manufacturerSelect"><strong>Manufacturer:</strong></label>
+        <label for="manufacturerSelect"><strong>Select Manufacturer:</strong></label>
         <div class="row">
           <select id="manufacturerSelect"></select>
           <button id="btnLoad">Classify</button>
         </div>
+        <button id="btnToggleAdd" style="margin-top: 12px;">+ Add a Manufacturer</button>
         <div class="muted small" id="countNote"></div>
-      </div>
+        
+        <!-- Add Manufacturer -->
+      <div class="panel hidden" id="addManufacturerPanel" style="margin-top: 24px;">
 
-      <!-- Details -->
-      <div id="details" class="details hidden">
-        <h2 id="mName"></h2>
-
-        <h3>Policy Description</h3>
-        <pre id="policy" class="policy"></pre>
-        <button id="togglePolicy" class="small-btn hidden">Read more</button>
-
-        <h3 id="lawHeader">Law Coverage</h3>
-        <div id="laws" class="cards law-cards"></div>
-
-        <!-- Top & Missing classes side by side -->
-        <div class="row two-col">
-          <div class="col">
-            <h3 id="classHeader">Matching Classes</h3>
-            <div id="classes" class="cards"></div>
-          </div>
-          <div class="col">
-            <h3 id="missingHeader">Missing Classes</h3>
-            <div id="missingClasses" class="cards"></div>
-          </div>
-        </div>
-      </div>
-            <!-- Add Manufacturer (bottom of page) -->
-      <div class="panel" style="margin-top: 24px;">
-        <h2>Add a Manufacturer</h2>
+        <strong>Add a Manufacturer<strong>
 
         <div class="field">
           <label for="newName"><strong>Name</strong></label>
@@ -63,26 +42,122 @@
             placeholder="Paste the relevant privacy policy text here"
             style="width:100%; padding:6px 8px; margin-top:4px; border-radius:8px; border:1px solid var(--border);"></textarea>
         </div>
-      <div class="field" style="margin-top: 12px;">
+        <div class="field" style="margin-top: 12px;">
           <label for="pdfFile"><strong>Upload policy PDF (optional)</strong></label>
           <input id="pdfFile" type="file" accept="application/pdf" style="display:block; margin-top:6px;" />
           <button id="btnExtractPdf" type="button" style="margin-top:8px;">Extract text from PDF</button>
           <div id="pdfStatus" class="small muted" style="margin-top: 6px;"></div>
-      </div>
+        </div>
 
         <button id="btnAdd" style="margin-top: 12px;">Save Manufacturer</button>
         <div id="addStatus" class="small muted" style="margin-top: 8px;"></div>
       </div>
+      </div>
+
+      <!-- Details -->
+      <div id="details" class="details hidden" style="margin-top: 32px;">
+        <h2 id="mName"></h2>
+
+        <h3>Policy Description</h3>
+        <pre id="policy" class="policy"></pre>
+        <button id="togglePolicy" class="small-btn hidden">Read more</button>
+
+        <hr style="margin-top: 20px;margin-bottom: 20px;">
+
+        <h3 id="lawHeader">Law Coverage</h3>
+        <div style="margin-bottom: 16px;">
+          <label for="stateFilter"><strong>Filter by State:</strong></label>
+          <select id="stateFilter" style="margin-left: 8px; padding: 4px 8px;">
+            <option value="all">All Regulations</option>
+            <option value="california">California</option>
+            <option value="oregon">Oregon</option>
+            <option value="nistir">NISTIR 8259</option>
+            <option value="plaw">Federal PL 116-207</option>
+          </select>
+        </div>
+        <div id="overallCoverage" style="margin-bottom: 16px; padding: 12px; background: #f5f5f5; border-radius: 8px;">
+          <strong><span id="coverageLabel">Overall Coverage</span>: </strong><span id="overallPercent">--</span>%
+        </div>
+        <div id="laws" class="cards law-cards"></div>
+
+        <!-- Top & Missing classes side by side -->
+        <div class="row two-col">
+          <div class="col">
+            <h3 id="classHeader">Compliant Means</h3>
+            <div id="classes" class="cards"></div>
+          </div>
+          <div class="col">
+            <h3 id="missingHeader">Non-Compliant Means</h3>
+            <div id="missingClasses" class="cards"></div>
+          </div>
+          </div>
+    
+      
     </div>
 
+      <div class="panel" style="margin-top: 32px;">
+  <h2>Learn more about IoT Information Privacy Compliances</h2>
+  <p style="margin-top: 8px; margin-bottom: 24px; font-weight: normal;">
+    These links below direct you to more information about California, Oregon, NIST, and Federal regulations about privacy in IoT Manufacturing.
+  </p>
+
+ <hr style="margin-top: 12px;">
+
+  <h3 style="margin-top: 32px; margin-bottom: 8px;">
+    California SB-327 - Information Privacy: Connected Devices
+  </h3>
+  <p style="margin-top: 0; font-weight: normal;">
+    This bill, beginning on January 1, 2020, would require a manufacturer of a connected device, as those terms are defined, to equip the device with a reasonable security feature or features that are appropriate to the nature and function of the device, appropriate to the information it may collect, contain, or transmit, and designed to protect the device and any information contained therein from unauthorized access, destruction, use, modification, or disclosure, as specified.
+  </p>
+  <a href="https://leginfo.legislature.ca.gov/faces/billCompareClient.xhtml?bill_id=201720180SB327" target="_blank">
+    <button style="margin-bottom: 12px;margin-top: -40px;">California SB-327</button>
+  </a>
+
+  <hr style="margin-top: 32px;">
+
+  <h3 style="margin-top: 32px; margin-bottom: 8px;">
+    Oregon HB 2395 - Security Measures For Devices Connected to the Internet
+  </h3>
+  <p style="margin-top: 0; font-weight: normal;">
+    Oregon HB 2395 requires manufacturers of internet-connected devices (IoT) designed for personal/household use to equip them with "reasonable security features".
+  </p>
+  <a href="https://olis.oregonlegislature.gov/liz/2019R1/Downloads/MeasureDocument/HB2395" target="_blank">
+    <button style="margin-bottom: 12px;margin-top: -40px;">Oregon HB 2395</button>
+  </a>
+
+  <hr style="margin-top: 32px;">
+
+  <h3 style="margin-top: 32px; margin-bottom: 8px;">
+    Federal PL 116-207 - IoT Cybersecurity Improvement Act of 2020
+  </h3>
+  <p style="margin-top: 0; font-weight: normal;">
+    To establish minimum security standards for Internet of Things devices owned or controlled by the Federal Government, and for other purposes.
+  </p>
+  <a href="https://www.congress.gov/116/plaws/publ207/PLAW-116publ207.pdf" target="_blank">
+    <button style="margin-bottom: 12px;margin-top: -40px;">IoT Cybersecurity Improvement Act of 2020</button>
+  </a>
+
+  <hr style="margin-top: 32px;">
+
+  <h3 style="margin-top: 32px; margin-bottom: 8px;">
+    NISTIR 8259 - Foundational Cybersecurity Activities for IoT Device Manufacturers
+  </h3>
+  <p style="margin-top: 0; font-weight: normal;">
+    These foundational cybersecurity activities can help manufacturers lessen the cybersecurity-related efforts needed by customers, which in turn can reduce the prevalence and severity of IoT device compromises and the attacks performed using compromised devices.
+  </p>
+  <a href="https://csrc.nist.gov/pubs/ir/8259/final" target="_blank">
+    <button style="margin-bottom: 32px;margin-top: -40px;">Foundational Cybersecurity Activities for IoT Device Manufacturers</button>
+  </a>
+</div>
     <script>
+
       function el(id){ return document.getElementById(id); }
 
       let policyFullText = "";
       let policyTruncatedText = "";
       let policyExpanded = false;
 
-      const CLASS_THRESHOLD = 0.0; // backend decides; keep 0 to not filter
+      const CLASS_THRESHOLD = 0.0; // Matches backend COVERAGE_THRESHOLD
 
       function makeTruncated(text, maxLen) {
         if (!text) return "";
@@ -103,73 +178,119 @@
         return "Fully";
       }
 
-      // Build short vs full HTML for a class description,
-      // and bold Oregon / California law names when present.
-      function buildLawSections(desc) {
-        if (!desc) {
-          return {
-            shortHtml: '<div class="law-desc">(no description)</div>',
-            fullHtml: '<div class="law-desc">(no description)</div>'
-          };
-        }
+      function buildLawSections(desc, stateFilter) {
+  if (!desc) {
+    return {
+      shortHtml: '<div class="law-desc">(no description)</div>',
+      fullHtml: '<div class="law-desc">(no description)</div>'
+    };
+  }
 
-        const pieces = desc.split(/(?<=[.!?])\s+|[\n\r]+|;+/, -1);
-        const oreSegs = [];
-        const caSegs  = [];
+  const pieces = desc.split(/(?<=[.!?])\s+|[\n\r]+|;+/, -1);
+  const oreSegs = [];
+  const caSegs  = [];
+  const niSegs  = [];
+  const plSegs  = [];
 
-        pieces.forEach(p => {
-          const pl = p.toLowerCase().trim();
-          if (!pl) return;
+  pieces.forEach(p => {
+    const pl = p.toLowerCase().trim();
+    if (!pl) return;
 
-          const isOre = pl.includes("oregon hb 2395") || pl.includes("hb 2395") || pl.includes("oregon");
-          const isCa  = pl.includes("california sb-327") || pl.includes("sb-327") || pl.includes("california");
+    const isOre = pl.includes("oregon hb 2395") || pl.includes("hb 2395") || pl.includes("oregon");
+    const isCa  = pl.includes("california sb-327") || pl.includes("sb-327") || pl.includes("california");
+    const isNi  = pl.includes("nistir 8259") || pl.includes("8259") || pl.includes("nist");
+    const isPl  = pl.includes("PL 116-207") || pl.includes("116-207") || pl.includes("federal");
 
-          if (isOre) oreSegs.push(p.trim());
-          if (isCa) caSegs.push(p.trim());
-        });
+    if (isOre) oreSegs.push(p.trim());
+    if (isCa) caSegs.push(p.trim());
+    if (isNi) niSegs.push(p.trim());
+    if (isPl) plSegs.push(p.trim());
+  });
 
-        let shortParts = [];
-        let fullParts  = [];
+  let shortParts = [];
+  let fullParts  = [];
 
-        if (oreSegs.length) {
-          const shortOre = truncateText(oreSegs[0], 120);
-          shortParts.push(
-            `<div class="law-desc"><strong>Oregon HB 2395</strong>: ${shortOre}</div>`
-          );
-          fullParts.push(
-            `<div class="law-desc"><strong>Oregon HB 2395</strong>: ${oreSegs.join(" ")}</div>`
-          );
-        }
+  // Filter segments based on stateFilter
+  const filter = (stateFilter || 'all').toLowerCase();
+  
+  // Only show Oregon segments if filter is 'all' or 'oregon'
+  if ((filter === 'all' || filter === 'oregon') && oreSegs.length) {
+    const joined = oreSegs.join(' ');
+    shortParts.push(
+      `<div class="law-segment">
+        <strong>Oregon HB 2395:</strong> ${truncateText(joined, 150)}
+      </div>`
+    );
+    fullParts.push(
+      `<div class="law-segment">
+        <strong>Oregon HB 2395:</strong> ${joined}
+      </div>`
+    );
+  }
 
-        if (caSegs.length) {
-          const shortCa = truncateText(caSegs[0], 120);
-          shortParts.push(
-            `<div class="law-desc"><strong>California SB-327</strong>: ${shortCa}</div>`
-          );
-          fullParts.push(
-            `<div class="law-desc"><strong>California SB-327</strong>: ${caSegs.join(" ")}</div>`
-          );
-        }
+  // Only show California segments if filter is 'all' or 'california'
+  if ((filter === 'all' || filter === 'california') && caSegs.length) {
+    const joined = caSegs.join(' ');
+    shortParts.push(
+      `<div class="law-segment">
+        <strong>California SB-327:</strong> ${truncateText(joined, 150)}
+      </div>`
+    );
+    fullParts.push(
+      `<div class="law-segment">
+        <strong>California SB-327:</strong> ${joined}
+      </div>`
+    );
+  }
 
-        // If we didn't detect explicit OR/CA mentions, just use the raw description.
-        if (!shortParts.length) {
-          const safe = desc || "(no description)";
-          const truncated = truncateText(safe, 120);
-          return {
-            shortHtml: `<div class="law-desc">${truncated}</div>`,
-            fullHtml: `<div class="law-desc">${safe}</div>`
-          };
-        }
+  // Only show NISTIR segments if filter is 'all' or 'nistir'
+  if ((filter === 'all' || filter === 'nistir') && niSegs.length) {
+    const joined = niSegs.join(' ');
+    shortParts.push(
+      `<div class="law-segment">
+        <strong>NISTIR 8259:</strong> ${truncateText(joined, 150)}
+      </div>`
+    );
+    fullParts.push(
+      `<div class="law-segment">
+        <strong>NISTIR 8259:</strong> ${joined}
+      </div>`
+    );
+  }
 
-        return {
-          shortHtml: shortParts.join(""),
-          fullHtml: fullParts.join("")
-        };
-      }
+  // Only show PLAW segments if filter is 'all' or 'plaw'
+  if ((filter === 'all' || filter === 'plaw') && plSegs.length) {
+    const joined = plSegs.join(' ');
+    shortParts.push(
+      `<div class="law-segment">
+        <strong>Public Law 116-207:</strong> ${truncateText(joined, 150)}
+      </div>`
+    );
+    fullParts.push(
+      `<div class="law-segment">
+        <strong>Public Law 116-207:</strong> ${joined}
+      </div>`
+    );
+  }
+
+  if (shortParts.length === 0) {
+    const fallback = truncateText(desc, 300);
+    return {
+      shortHtml: `<div class="law-desc">${fallback}</div>`,
+      fullHtml: `<div class="law-desc">${desc}</div>`
+    };
+  }
+
+  return {
+    shortHtml: shortParts.join(''),
+    fullHtml: fullParts.join('')
+  };
+}
 
       async function loadDropdown() {
         const res = await fetch('/list');
         const items = await res.json();
+        console.log('Manufacturers loaded:', items);
         const sel = el('manufacturerSelect');
         sel.innerHTML = '';
 
@@ -189,24 +310,26 @@
           sel.appendChild(opt);
         });
 
-        el('countNote').textContent = `${items.length} manufacturer(s)`;
+        el('countNote').textContent = `${items.length} total manufacturer(s)`;
         // Auto-load first manufacturer
         sel.value = items[0].iri;
         loadDetail();
       }
 
-      async function loadDetail()  {
+      async function loadDetail() {
         const sel = el('manufacturerSelect');
         const iri = sel.value;
         if (!iri) return;
 
-        const res = await fetch('/detail?iri=' + encodeURIComponent(iri));
+        const stateFilter = el('stateFilter').value;
+
+        const res = await fetch('/detail?iri=' + encodeURIComponent(iri) + '&state=' + encodeURIComponent(stateFilter));
         const data = await res.json();
 
         el('details').classList.remove('hidden');
         el('mName').textContent = data.name || '(no label)';
 
-        // Policy text + main "Read more"
+        // Policy text
         policyFullText = data.policy || '(no policy_description found)';
         policyTruncatedText = makeTruncated(policyFullText, 500);
         policyExpanded = false;
@@ -215,82 +338,100 @@
         const toggleBtn = el('togglePolicy');
 
         if (policyFullText.length > 500) {
-          policyEl.textContent = policyTruncatedText;
-          toggleBtn.classList.remove('hidden');
-          toggleBtn.textContent = "Read more";
-        } else {
+        policyEl.textContent = policyTruncatedText;  // changed from policyTruncatedText
+        policyEl.style.maxHeight = '150px';     // add scrollable container
+        policyEl.style.overflowY = 'hidden';      // add scroll
+        toggleBtn.classList.remove('hidden');
+        toggleBtn.textContent = "Read more";
+          } else {
           policyEl.textContent = policyFullText;
           toggleBtn.classList.add('hidden');
+          }
+
+        // Overall coverage - show percentage based on state filter
+        const lawCoverage = data.law_coverage || [];
+        console.log('Law Coverage Data:', lawCoverage);
+        console.log('State Filter:', stateFilter);
+        let overallPct = 0;
+        let coverageLabel = 'Overall Coverage';
+        
+        // Always use the overall_coverage from backend, which is already filtered by state
+        overallPct = data.overall_coverage || 0;
+        
+        if (stateFilter === 'all') {
+          coverageLabel = 'Overall Coverage';
+        } else if (stateFilter === 'california') {
+          coverageLabel = 'California Legislature Coverage';
+        } else if (stateFilter === 'oregon') {
+          coverageLabel = 'Oregon Legislature Coverage';
+        } else if (stateFilter === 'nistir') {
+          coverageLabel = 'NISTIR Standard Coverage';
+        } else if (stateFilter === 'plaw') {
+          coverageLabel = 'Federal Public Law 116-207 Coverage';
         }
+        
+        
+        console.log('Using overall_coverage from backend:', overallPct);
+        el('coverageLabel').textContent = coverageLabel;
+        el('overallPercent').textContent = overallPct.toFixed(1);
 
         // Law coverage
         const lawsDiv = el('laws');
         lawsDiv.innerHTML = '';
-        const lawHeader = el('lawHeader');
 
-        const lawCoverage = data.law_coverage || [];
-        const missingLaws = new Set(data.missing_laws || []);
+        lawCoverage.forEach(law => {
+          const pct = law.coverage_percent || 0;
+          const status = statusFromCoverage(pct, law.num_above_threshold, law.num_classes);
 
-        if (!lawCoverage.length) {
-          lawsDiv.innerHTML = '<p class="muted">No law coverage information.</p>';
-          lawHeader.style.display = '';
-        } else {
-          lawHeader.style.display = '';
-          lawCoverage.forEach(l => {
-            const isMissing = missingLaws.has(l.id) || l.coverage_percent === 0;
-            const statusText = statusFromCoverage(
-              l.coverage_percent,
-              l.num_above_threshold,
-              l.num_classes
-            );
+          const card = document.createElement('div');
+          card.className = 'card';
+          card.innerHTML = `
+            <div class="card-title">
+              <span class="law-percent">${pct.toFixed(1)}%</span>
+              <span class="law-label-text">${law.label}</span>
+            </div>
+            <div class="chip">
+              <strong>Status:</strong>&nbsp;${status}
+            </div>
+            <div class="chip">
+              <strong>Covered:</strong>&nbsp;${law.num_above_threshold} / ${law.num_classes} classes
+            </div>
+          `;
+          lawsDiv.appendChild(card);
+        });
 
-            const card = document.createElement('div');
-            card.className = 'card';
-            card.innerHTML = `
-              <div class="card-title">${l.label}</div>
-              <div class="row">
-                <span class="chip">
-                  <span class="law-percent">${l.coverage_percent}%</span>
-                  <span class="law-label-text">coverage</span>
-                </span>
-              </div>
-              <div class="row">
-                <strong>Status:</strong>&nbsp;<span>${statusText}</span>
-              </div>
-              <div class="small muted">
-                ${l.num_above_threshold}/${l.num_classes} related classes above similarity threshold
-              </div>
-            `;
-
-            if (isMissing) {
-              card.querySelector('.chip').style.background = '#fee2e2';
-            }
-            lawsDiv.appendChild(card);
-          });
-        }
-
-        // Top Classes
+        // Only show Matching and Missing Classes if a specific state is selected
+        if (stateFilter !== 'all') {
+          // Top classes
+           // Top Classes
         const classesDiv = el('classes');
         const classHeader = el('classHeader');
         classesDiv.innerHTML = '';
 
-        let classes = data.suggested_classes || [];
-        // backend already applied threshold; we leave CLASS_THRESHOLD=0
+        const topClasses = data.suggested_classes || [];
+        const INITIAL_COMPLIANT_DISPLAY = 5; // Show only 5 initially
 
-        if (!classes.length) {
-          classHeader.style.display = 'none';
-          classesDiv.style.display = 'none';
+        if (!topClasses.length) {
+          classHeader.style.display = '';
+          classesDiv.innerHTML = '<p class="muted small">No compliant means found.</p>';
         } else {
           classHeader.style.display = '';
-          classesDiv.style.display = '';
-          classes.forEach(c => {
-            const desc = c.class_desc || "";
-            const { shortHtml, fullHtml } = buildLawSections(desc);
+          
+          topClasses.forEach((cls, index) => {
+            const desc = cls.class_desc || "";
+            const { shortHtml, fullHtml } = buildLawSections(desc, stateFilter);
 
             const card = document.createElement('div');
             card.className = 'card';
+            
+            // Hide cards beyond the initial display limit
+            if (index >= INITIAL_COMPLIANT_DISPLAY) {
+              card.classList.add('hidden');
+              card.classList.add('extra-compliant-card');
+            }
+            
             card.innerHTML = `
-              <div class="card-title">${c.class_label}</div>
+              <div class="card-title">${cls.class_label}</div>
               <div class="small muted class-desc-short">
                 ${shortHtml}
               </div>
@@ -304,7 +445,6 @@
             const fullDiv = card.querySelector('.class-desc-full');
             const btn = card.querySelector('.class-desc-toggle');
 
-            // If short and full are the same, hide the toggle
             if (shortHtml.trim() === fullHtml.trim()) {
               btn.classList.add('hidden');
             } else {
@@ -324,17 +464,39 @@
 
             classesDiv.appendChild(card);
           });
-        }
 
-        // Missing Classes
+          // Add "Show More" button if there are hidden cards
+          if (topClasses.length > INITIAL_COMPLIANT_DISPLAY) {
+            const showMoreBtn = document.createElement('button');
+            showMoreBtn.className = 'show-more-btn';
+            showMoreBtn.textContent = `Show ${topClasses.length - INITIAL_COMPLIANT_DISPLAY} more compliant means`;
+            showMoreBtn.id = 'showMoreCompliant';
+            
+            showMoreBtn.addEventListener('click', () => {
+              const hiddenCards = classesDiv.querySelectorAll('.extra-compliant-card.hidden');
+              const isExpanded = hiddenCards.length === 0;
+              
+              if (isExpanded) {
+                // Collapse: hide extra cards
+                const extraCards = classesDiv.querySelectorAll('.extra-compliant-card');
+                extraCards.forEach(card => card.classList.add('hidden'));
+                showMoreBtn.textContent = `Show ${topClasses.length - INITIAL_COMPLIANT_DISPLAY} more compliant means`;
+              } else {
+                // Expand: show all cards
+                hiddenCards.forEach(card => card.classList.remove('hidden'));
+                showMoreBtn.textContent = 'Show less';
+              }
+            });
+            
+            classesDiv.appendChild(showMoreBtn);
+          }
+        } // Missing Classes
         const missingDiv = el('missingClasses');
         const missingHeader = el('missingHeader');
         missingDiv.innerHTML = '';
 
-        // Raw list from backend (may contain duplicates per law)
         const rawMissing = data.missing_classes || [];
 
-        // Deduplicate by class_iri (fallback to class_label if needed)
         const missingByClass = new Map();
         rawMissing.forEach(mc => {
           const key = mc.class_iri || mc.class_label;
@@ -344,20 +506,28 @@
         });
 
         const missingClasses = Array.from(missingByClass.values());
+        const INITIAL_MISSING_DISPLAY = 5; // Show only 5 initially
 
         if (!missingClasses.length) {
-          // No missing classes for this manufacturer under these laws
           missingHeader.style.display = '';
-          missingDiv.innerHTML = '<p class="muted small">(No missing classes under these laws.)</p>';
+          missingDiv.innerHTML = '<p class="muted small">There are no non-compliant issues with this policy.</p>';
         } else {
           missingHeader.style.display = '';
           missingDiv.style.display = '';
-          missingClasses.forEach(mc => {
+          
+          missingClasses.forEach((mc, index) => {
             const desc = mc.class_desc || "";
-            const { shortHtml, fullHtml } = buildLawSections(desc);
+            const { shortHtml, fullHtml } = buildLawSections(desc, stateFilter);
 
             const card = document.createElement('div');
             card.className = 'card';
+            
+            // Hide cards beyond the initial display limit
+            if (index >= INITIAL_MISSING_DISPLAY) {
+              card.classList.add('hidden');
+              card.classList.add('extra-missing-card');
+            }
+            
             card.innerHTML = `
               <div class="card-title">${mc.class_label}</div>
               <div class="small muted class-desc-short">
@@ -376,7 +546,6 @@
             const fullDiv = card.querySelector('.class-desc-full');
             const btn = card.querySelector('.class-desc-toggle');
 
-            // If short and full are the same, hide the toggle
             if (shortHtml.trim() === fullHtml.trim()) {
               btn.classList.add('hidden');
             } else {
@@ -396,15 +565,48 @@
 
             missingDiv.appendChild(card);
           });
+
+          // Add "Show More" button if there are hidden cards
+          if (missingClasses.length > INITIAL_MISSING_DISPLAY) {
+            const showMoreBtn = document.createElement('button');
+            showMoreBtn.className = 'show-more-btn';
+            showMoreBtn.textContent = `Show ${missingClasses.length - INITIAL_MISSING_DISPLAY} more non-compliant means`;
+            showMoreBtn.id = 'showMoreMissing';
+            
+            showMoreBtn.addEventListener('click', () => {
+              const hiddenCards = missingDiv.querySelectorAll('.extra-missing-card.hidden');
+              const isExpanded = hiddenCards.length === 0;
+              
+              if (isExpanded) {
+                // Collapse: hide extra cards
+                const extraCards = missingDiv.querySelectorAll('.extra-missing-card');
+                extraCards.forEach(card => card.classList.add('hidden'));
+                showMoreBtn.textContent = `Show ${missingClasses.length - INITIAL_MISSING_DISPLAY} more non-compliant means`;
+              } else {
+                // Expand: show all cards
+                hiddenCards.forEach(card => card.classList.remove('hidden'));
+                showMoreBtn.textContent = 'Show less';
+              }
+            });
+            
+            missingDiv.appendChild(showMoreBtn);
+          }
         }
+      } else {
+        // Clear them out when "All States" is selected
+        el('classes').innerHTML = '';
+        el('missingClasses').innerHTML = '';
+        el('classHeader').style.display = 'none';
+        el('missingHeader').style.display = 'none';
       }
+      }
+
       async function addManufacturer() {
         const nameInput = el('newName');
         const policyInput = el('newPolicy');
         const statusEl = el('addStatus');
 
         if (!nameInput || !policyInput || !statusEl) {
-          // Form doesn't exist on this page
           return;
         }
 
@@ -433,11 +635,9 @@
 
           statusEl.textContent = "Manufacturer added successfully.";
 
-          // Clear the form
           nameInput.value = "";
           policyInput.value = "";
 
-          // Reload dropdown and auto-select new manufacturer
           await loadDropdown();
           el('manufacturerSelect').value = data.iri;
           await loadDetail();
@@ -446,55 +646,55 @@
           statusEl.textContent = "Network error while saving manufacturer.";
         }
       }
-    async function extractPdfToPolicy() {
-  const fileInput = el('pdfFile');
-  const statusEl = el('pdfStatus');
-  const policyBox = el('newPolicy');
 
-  statusEl.textContent = "";
+      async function extractPdfToPolicy() {
+        const fileInput = el('pdfFile');
+        const statusEl = el('pdfStatus');
+        const policyBox = el('newPolicy');
 
-  if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
-    statusEl.textContent = "Please choose a PDF file first.";
-    return;
-  }
+        statusEl.textContent = "";
 
-  const file = fileInput.files[0];
-  const formData = new FormData();
-  formData.append("file", file);
+        if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+          statusEl.textContent = "Please choose a PDF file first.";
+          return;
+        }
 
-  try {
-    statusEl.textContent = "Extracting text...";
-    const res = await fetch("/extract_pdf", {
-      method: "POST",
-      body: formData
-    });
+        const file = fileInput.files[0];
+        const formData = new FormData();
+        formData.append("file", file);
 
-    const data = await res.json();
+        try {
+          statusEl.textContent = "Extracting text...";
+          const res = await fetch("/extract_pdf", {
+            method: "POST",
+            body: formData
+          });
 
-    if (!res.ok) {
-      statusEl.textContent = data.error || "Error extracting PDF text.";
-      return;
-    }
+          const data = await res.json();
 
-    if (data.error && !data.text) {
-      // backend may return error message but 200
-      statusEl.textContent = data.error;
-      return;
-    }
+          if (!res.ok) {
+            statusEl.textContent = data.error || "Error extracting PDF text.";
+            return;
+          }
 
-    const extracted = (data.text || "").trim();
-    if (!extracted) {
-      statusEl.textContent = "No text extracted.";
-      return;
-    }
+          if (data.error && !data.text) {
+            statusEl.textContent = data.error;
+            return;
+          }
 
-    policyBox.value = extracted;
-    statusEl.textContent = `Extracted ${extracted.length.toLocaleString()} characters into the policy box.`;
-  } catch (err) {
-    console.error(err);
-    statusEl.textContent = "Network/server error extracting PDF.";
-  }
-}
+          const extracted = (data.text || "").trim();
+          if (!extracted) {
+            statusEl.textContent = "No text extracted.";
+            return;
+          }
+
+          policyBox.value = extracted;
+          statusEl.textContent = `Extracted ${extracted.length.toLocaleString()} characters into the policy box.`;
+        } catch (err) {
+          console.error(err);
+          statusEl.textContent = "Network/server error extracting PDF.";
+        }
+      }
 
       // Main policy "Read more" toggle
       el('togglePolicy').onclick = function () {
@@ -503,21 +703,58 @@
 
         if (!policyExpanded) {
           policyEl.textContent = policyFullText;
+          policyEl.style.overflow = 'auto';
           toggleBtn.textContent = "Show less";
           policyExpanded = true;
         } else {
           policyEl.textContent = policyTruncatedText;
+          policyEl.style.overflow = 'hidden';
           toggleBtn.textContent = "Read more";
           policyExpanded = false;
         }
       };
-
+        // Toggle Add Manufacturer section
+        el('btnToggleAdd').onclick = function() {
+          const panel = el('addManufacturerPanel');
+          const btn = el('btnToggleAdd');
+          
+          if (panel.classList.contains('hidden')) {
+            panel.classList.remove('hidden');
+            btn.textContent = '− Hide Add Manufacturer';
+          } else {
+            panel.classList.add('hidden');
+            btn.textContent = '+ Add a Manufacturer';
+          }
+        };
       el('btnLoad').onclick = loadDetail;
       el('manufacturerSelect').addEventListener('change', loadDetail);
       el('btnAdd').onclick = addManufacturer;
       el('btnExtractPdf').onclick = extractPdfToPolicy;
+      el('stateFilter').addEventListener('change', loadDetail);
 
       loadDropdown();
+            // Dark mode toggle
+      const darkModeToggle = el('darkModeToggle');
+      const body = document.body;
+
+      // Check for saved preference
+      if (localStorage.getItem('darkMode') === 'enabled') {
+        body.classList.add('dark-mode');
+        darkModeToggle.textContent = '☀️';
+      }
+
+      darkModeToggle.onclick = function() {
+        body.classList.toggle('dark-mode');
+        
+        if (body.classList.contains('dark-mode')) {
+          darkModeToggle.textContent = '☀️';
+          localStorage.setItem('darkMode', 'enabled');
+        } else {
+          darkModeToggle.textContent = '🌙';
+          localStorage.setItem('darkMode', 'disabled');
+        }
+      };
+
     </script>
   </body>
 </html>
