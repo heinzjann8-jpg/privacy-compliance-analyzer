@@ -1,11 +1,32 @@
 :root {
   --bg: #f5f5f8;
+  --panel: #ffffff:root {
+  --bg: #f5f5f8;
   --panel: #ffffff;
-  --text: #111827;
+  --text: #444444;
   --muted: #6b7280;
-  --accent: #2563eb;
+  --accent: #0814c1;
   --chip: #e5e7eb;
   --border: #d1d5db;
+  --policy-bg: #f9fafb;
+  --card-bg: #f9fafb;
+  --select-bg: #ffffff;
+  --select-text: #111827;
+}
+
+/* Dark mode */
+body.dark-mode {
+  --bg: #000000;
+  --panel: #2a2a2a;
+  --text: #ffffff;
+  --muted: #cccccc;
+  --accent: #0814c1;
+  --chip: #404040;
+  --border: #444444;
+  --policy-bg: #2a2a2a;
+  --card-bg: #1a1a1a;
+  --select-bg: #000000;
+  --select-text: #ffffff;
 }
 
 * {
@@ -17,16 +38,40 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Arial;
+  transition: background-color 0.3s, color 0.3s;
+}
+
+/* Dark mode toggle button */
+#darkModeToggle {
+  position: fixed;
+  top: 20px;
+  left: 20px;
+  padding: 6px 6px;
+  background-color: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  z-index: 1000;
+  font-size: 14px;
+  color: var(--text);
+  font-weight: 500;
+}
+
+#darkModeToggle:hover {
+  opacity: 0.8;
 }
 
 /* Make law coverage percentages stand out */
 .law-percent {
-  font-size: 0.9rem;      /* small text */
-  font-weight: 700;       /* bold but not huge */
-  color: #cc0000;         /* red */
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #cc0000;
   margin-right: 4px;
 }
 
+body.dark-mode .law-percent {
+  color: #ff4444;
+}
 
 .law-label-text {
   font-size: 0.95rem;
@@ -34,6 +79,9 @@ body {
   color: #444;
 }
 
+body.dark-mode .law-label-text {
+  color: #cccccc;
+}
 
 .container {
   max-width: 980px;
@@ -44,16 +92,19 @@ body {
 h1 {
   margin: 0 0 8px;
   font-size: 28px;
+  color: var(--text);
 }
 
 h2 {
   margin: 24px 0 8px;
   font-size: 22px;
+  color: var(--text);
 }
 
 h3 {
   margin: 16px 0 8px;
   font-size: 18px;
+  color: var(--text);
 }
 
 .subtitle {
@@ -100,6 +151,7 @@ h3 {
 
 label {
   font-size: 14px;
+  color: var(--text);
 }
 
 select {
@@ -107,8 +159,28 @@ select {
   padding: 6px 8px;
   border-radius: 8px;
   border: 1px solid var(--border);
-  background: #ffffff;
+  background: var(--select-bg);
   font-size: 14px;
+  color: var(--select-text);
+  position: relative;
+  z-index: 10;
+}
+
+select option {
+  background: var(--select-bg);
+  color: var(--select-text);
+}
+
+input[type="text"],
+textarea {
+  background: var(--select-bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+input[type="text"]::placeholder,
+textarea::placeholder {
+  color: var(--muted);
 }
 
 button {
@@ -129,6 +201,13 @@ button:hover {
 .small-btn {
   padding: 4px 8px;
   font-size: 12px;
+}
+
+#mName {
+  font-size: 42px;           /* Make it bigger */
+  text-align: center;        /* Center it */
+  margin: 0px 0;            /* Add spacing */
+  font-weight: 700;          /* Make it bolder */
 }
 
 .small-btn.hidden {
@@ -159,13 +238,14 @@ button:hover {
 
 .policy {
   white-space: pre-wrap;
-  background: #f9fafb;
+  background: var(--policy-bg);
   border-radius: 8px;
   padding: 12px;
   border: 1px solid var(--border);
   max-height: 260px;
   overflow: hidden;
   font-size: 13px;
+  color: var(--text);
 }
 
 .cards {
@@ -177,7 +257,15 @@ button:hover {
 .card {
   border-radius: 10px;
   padding: 10px 12px;
-  background: #f9fafb;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+/* Overall coverage box styling */
+#overallCoverage {
+  background: var(--card-bg) !important;
+  color: var(--text);
   border: 1px solid var(--border);
 }
 
@@ -185,6 +273,7 @@ button:hover {
   font-weight: 600;
   margin-bottom: 4px;
   font-size: 14px;
+  color: var(--text);
 }
 
 .chip {
@@ -211,6 +300,7 @@ button:hover {
   margin-top: 4px;
   font-size: 12px;
   line-height: 1.4;
+  color: var(--muted);
 }
 
 .class-desc-short.hidden,
@@ -226,13 +316,15 @@ button:hover {
 /* Law description pieces */
 .law-desc {
   margin-top: 4px;
+  color: var(--muted);
 }
 
 .law-desc strong {
   font-weight: 700;
+  color: var(--text);
 }
 
-/* “Related law” label in missing-classes cards */
+/* "Related law" label in missing-classes cards */
 .related-law {
   margin-top: 4px;
   font-size: 11px;
