@@ -32,11 +32,11 @@ ONTO_PATH = Path(CFG["ontology_path"]).resolve()
 MANUFACTURER_CLS = URIRef(CFG["manufacturer_class_iri"])
 POLICY_PROP = URIRef(CFG["policy_property_iri"])
 
-TOP_K = int(CFG.get("top_k", 8))  # not really used now, but kept for compatibility
+TOP_K = int(CFG.get("top_k", 8))
 LAW_PREDICATES = [URIRef(p) for p in CFG.get("law_annotation_predicates", [])]
 LAWS = CFG.get("laws", [])
-COVERAGE_THRESHOLD = float(CFG.get("coverage_threshold", 0.15))
-MISSING_CLASS_SIM_THRESHOLD = COVERAGE_THRESHOLD  # missing vs top use same threshold
+COVERAGE_THRESHOLD = float(CFG.get("coverage_threshold", 0.0))
+MISSING_CLASS_SIM_THRESHOLD = COVERAGE_THRESHOLD
 SIMILARITY_METHOD = CFG.get("similarity_method", "tfidf").lower()
 EMBEDDING_MODEL_NAME = CFG.get("embedding_model_name", "all-MiniLM-L6-v2")
 USER_ADDED_PROP = URIRef("http://example.org/onto.owl#userAddedManufacturer")
@@ -58,38 +58,34 @@ SPECIAL_NAME_FIXES = {
 }
 
 def clean_manufacturer_name(name: str) -> str:
-    """
-    Normalize manufacturer labels so they look neat.
-    - Uses special casing if available
-    - Else converts to Title Case
-    """
+    """Normalize manufacturer labels so they look neat."""
     lower = name.lower().strip()
-
     if lower in SPECIAL_NAME_FIXES:
         return SPECIAL_NAME_FIXES[lower]
-
-    # Default: Title Case
     return name.title()
 
 def clean_class_label(label: str) -> str:
-    """
-    Fix known class capitalization issues.
-    """
+    """Fix known class capitalization issues."""
     fixes = {
         "network interface": "Network Interface",
         "iot device": "IoT Device",
         "io tdevice": "IoT Device",
         "iotdevice": "IoT Device",
     }
-
     lower = label.lower().strip()
     return fixes.get(lower, label)
+
+def generate_manufacturer_iri(name: str) -> URIRef:
+    """Generate a unique IRI for a new manufacturer based on its name."""
+    safe_name = name.lower().replace(" ", "_").replace("&", "and")
+    safe_name = re.sub(r'[^a-z0-9_]', '', safe_name)
+    base_iri = "http://example.org/onto.owl#"
+    return URIRef(f"{base_iri}{safe_name}")
 
 # -------------------- Load graph --------------------
 g = Graph()
 print(f"[load] {ONTO_PATH}")
 g.parse(str(ONTO_PATH))
-
 
 # -------------------- Helpers --------------------
 def local_name(iri: str) -> str:
@@ -102,23 +98,12 @@ def local_name(iri: str) -> str:
     s = s.replace("_", " ").replace("-", " ")
     return s
 
-
 def extract_law_segments(value: str):
-    """
-    Take one hasLaw literal (which might mention multiple laws, e.g.
-    'California SB 327 ... Oregon HB 2395 ... NIST IR 8259 ...')
-    and return a dict: law_id -> [sentence fragments] that mention that law.
-
-    We:
-      - split the text into rough 'sentences' using punctuation/newlines/semicolons
-      - for each sentence, check keywords for each law
-      - only keep sentences that match a configured law keyword
-    """
+    """Extract law-specific segments from text."""
     segments_by_law = {law["id"]: [] for law in LAWS}
     if not value:
         return {}
 
-    # Split into chunks on ., ?, !, newlines, or semicolons
     pieces = re.split(r'(?<=[.!?])\s+|[\n\r]+|;+', value)
     for piece in pieces:
         plow = piece.lower().strip()
@@ -129,29 +114,48 @@ def extract_law_segments(value: str):
             for kw in law.get("keywords", []):
                 if kw.lower() in plow:
                     segments_by_law[lid].append(piece.strip())
-                    break  # avoid duplicate adds for multiple keywords
+                    break
 
-    # Drop empty entries
     return {lid: segs for lid, segs in segments_by_law.items() if segs}
 
+def filter_description_by_laws(description: str, allowed_law_ids: set) -> str:
+        """Filter a description to only include text from specified laws."""
+        if not description or not allowed_law_ids:
+            return description
+    
+    # Law patterns to identify and extract
+        law_patterns = {
+        'CA_SB_327': r'California SB[- ]?327[^.]*\.',
+        'OR_HB_2395': r'Oregon HB[- ]?2395[^.]*\.',
+        'NISTIR_8259': r'NISTIR 8259[^.]*\.',
+        'PL_116-207': r'(?:PL 116-207|Public Law 116-207)[^.]*\.'
+    }
+    
+    # Extract only sentences that mention allowed laws
+        filtered_parts = []
+        for law_id in allowed_law_ids:
+            if law_id in law_patterns:
+                pattern = law_patterns[law_id]
+            matches = re.finditer(pattern, description, re.IGNORECASE)
+            for match in matches:
+                filtered_parts.append(match.group(0))
+    
+        return ' '.join(filtered_parts) if filtered_parts else description
 
 # -------------------- Build class corpus --------------------
-# Any OWL class with a law annotation mentioning one of the configured laws
 class_iris = []
 class_labels = []
 class_texts = []
-class_descs = {}        # class IRI -> description text (from rdfs:comment)
-class_to_laws = {}      # class IRI -> set of law IDs
+class_descs = {}
+class_to_laws = {}
 
 for c in g.subjects(RDF.type, OWL.Class):
     if not isinstance(c, URIRef):
         continue
 
     c_iri = str(c)
-
-    # 1) Collect law annotations for this class -> for law linkage only
     law_ids_for_class = set()
-    law_snippets = []  # segments mentioning the configured laws (for similarity only)
+    law_snippets = []
 
     for pred in LAW_PREDICATES:
         for obj in g.objects(c, pred):
@@ -161,26 +165,18 @@ for c in g.subjects(RDF.type, OWL.Class):
                 law_ids_for_class.add(lid)
                 law_snippets.extend(segs)
 
-    # If the class has no applicable law segments, skip it (not relevant to OR/CA/etc)
     if not law_ids_for_class:
         continue
 
-    # 2) Labels and comments for the class
     labels = [str(o) for o in g.objects(c, RDFS.label)]
     comments = [str(o) for o in g.objects(c, RDFS.comment)]
 
     if not labels:
         labels = [clean_class_label(local_name(c_iri))]
 
-
     label_text = clean_class_label(" / ".join(labels))
-
-    # Combined text used for TF-IDF similarity
-    # Keep comments (your descriptive annotation) + law snippets + label
     combined = " ".join(labels + comments + law_snippets + [local_name(c_iri)])
 
-    # Description displayed in UI: ONLY the rdfs:comment text
-    # (fallback to law snippets if there is somehow no comment)
     if comments:
         class_desc = " ".join(comments).strip()
     else:
@@ -195,7 +191,7 @@ for c in g.subjects(RDF.type, OWL.Class):
 if not class_texts:
     raise SystemExit("No eligible classes found with law annotations matching configured keywords.")
 
-# -------------------- DEDUPLICATE CLASSES BY CLEAN LABEL --------------------
+# -------------------- DEDUPLICATE CLASSES --------------------
 seen = set()
 dedup_iris = []
 dedup_labels = []
@@ -207,7 +203,6 @@ for i, c_iri in enumerate(class_iris):
     label = class_labels[i]
     clean_label = label.lower().strip()
 
-    # if label is already seen, skip duplicates
     if clean_label in seen:
         continue
 
@@ -218,7 +213,6 @@ for i, c_iri in enumerate(class_iris):
     dedup_descs[c_iri] = class_descs[c_iri]
     dedup_laws[c_iri] = class_to_laws[c_iri]
 
-# Replace originals with deduped versions
 class_iris = dedup_iris
 class_labels = dedup_labels
 class_texts = dedup_texts
@@ -237,178 +231,195 @@ for c_iri, law_ids in class_to_laws.items():
         if lid in law_to_class_idxs:
             law_to_class_idxs[lid].append(idx)
 
-# Debug counts
 for law in LAWS:
     lid = law["id"]
     print(f"[init] Law {lid} has {len(law_to_class_idxs.get(lid, []))} related classes")
 
+# -------------------- Build manufacturers list --------------------
+manufacturers = []
+for inst in g.subjects(RDF.type, MANUFACTURER_CLS):
+    if not isinstance(inst, URIRef):
+        continue
+    
+    inst_iri = str(inst)
+    user_added = any(g.objects(inst, USER_ADDED_PROP))
+    
+    labels = [str(o) for o in g.objects(inst, RDFS.label)]
+    if not labels:
+        name = clean_manufacturer_name(local_name(inst_iri))
+    else:
+        name = clean_manufacturer_name(labels[0])
+    
+    if name not in ALLOWED_MANUFACTURERS and not user_added:
+        continue
+    
+    policies = [str(o) for o in g.objects(inst, POLICY_PROP) if isinstance(o, Literal)]
+    policy = max(policies, key=len) if policies else ""
+    
+    manufacturers.append({
+        "iri": inst_iri,
+        "name": name,
+        "policy": policy,
+        "user_added": user_added
+    })
 
-# -------------------- Prepare similarity model over class texts --------------------
+manufacturers.sort(key=lambda m: m["name"].lower())
+print(f"[init] Loaded {len(manufacturers)} manufacturers")
+
+# -------------------- Prepare similarity model --------------------
 if SIMILARITY_METHOD == "tfidf":
     print("[init] Using TF-IDF similarity")
     vectorizer = TfidfVectorizer(
         lowercase=True,
         stop_words="english",
         ngram_range=(1, 2),
-        max_features=5000,
+        max_features=1000
     )
-    X_classes = vectorizer.fit_transform(class_texts)
-    class_embeddings = None  # not used in this mode
+    class_matrix = vectorizer.fit_transform(class_texts)
 
 elif SIMILARITY_METHOD == "bert":
-    print(f"[init] Using BERT embeddings ({EMBEDDING_MODEL_NAME})")
+    print(f"[init] Using BERT embeddings with model: {EMBEDDING_MODEL_NAME}")
     model = SentenceTransformer(EMBEDDING_MODEL_NAME)
-    # Encode each class text into a dense vector
     class_embeddings = model.encode(
         class_texts,
         convert_to_numpy=True,
-        normalize_embeddings=True,  # so dot product == cosine
+        normalize_embeddings=True,
+        show_progress_bar=True
     )
-    vectorizer = None   # not used in this mode
-    X_classes = None
+
 else:
     raise ValueError(f"Unknown similarity_method: {SIMILARITY_METHOD}")
 
-
-
-# -------------------- Collect manufacturers --------------------
-manufacturers = []
-q = f"""
-SELECT DISTINCT ?inst WHERE {{
-  ?inst a ?t .
-  ?t rdfs:subClassOf* <{CFG["manufacturer_class_iri"]}> .
-}}
-"""
-
-for row in g.query(q, initNs={"rdfs": RDFS}):
-    inst = row.inst
-    iri = str(inst)
-    labels = [str(o) for o in g.objects(inst, RDFS.label)]
-    name = clean_manufacturer_name(labels[0]) if labels else clean_manufacturer_name(local_name(iri))
-    policies = [str(o) for o in g.objects(inst, POLICY_PROP) if isinstance(o, Literal)]
-    policy = max(policies, key=len) if policies else ""
-    user_added = any(g.objects(inst, USER_ADDED_PROP))
-    manufacturers.append({"iri": iri, "name": name, "policy": policy, "user_added": user_added})
-
-
-# Sort by name
-manufacturers.sort(key=lambda m: m["name"].lower())
-
-def is_allowed_name(name: str) -> bool:
-    """
-    Return True if this manufacturer name should be included.
-    We do a case-insensitive *substring* match so that e.g.
-    'Apple' matches 'Apple Inc.', 'Ring' matches 'Ring LLC', etc.
-    """
-    nlow = name.lower()
-    for allowed in ALLOWED_MANUFACTURERS:
-        if allowed.lower() in nlow:
-            return True
-    return False
-
-# Try to filter to only the 20 allowed manufacturers (plus any user-added ones)
-filtered = [m for m in manufacturers if m.get("user_added") or is_allowed_name(m["name"])]
-
-if filtered:
-    manufacturers = filtered
-    print(f"[init] Loaded {len(manufacturers)} manufacturers after filtering to allowed list.")
-else:
-    # Fallback so you don't get an empty dropdown
-    print("[init] WARNING: filter removed all manufacturers; using full list instead.")
-    print("[init] Manufacturer names found in ontology:")
-    for m in manufacturers:
-        print("   -", m["name"])
-
-def generate_manufacturer_iri(name: str) -> URIRef:
-    """
-    Create a unique IRI for a new Manufacturer instance, based on its name.
-    """
-    # Changes: "http://example.org/onto.owl#Manufacturer"  ->   "http://example.org/onto.owl#
-    base = str(MANUFACTURER_CLS).split("#")[0] + "#"
-
-    # Turn "Apple Inc." into "Apple_Inc"
-    slug = re.sub(r"\W+", "_", name.strip())
-    if not slug:
-        slug = "Manufacturer"    #Uses "Manufacturer" as the fallback to stop program from breaking just in case user adds invalid characters
-    
-    #Creates new IRI by combining oringinal IRI from Config.JSON to new manufacturer slug created
-    candidate = URIRef(base + slug)
-    i = 1
-    # Ensure uniqueness: if this IRI already has any triples in the graph, add suffix (EX. 1,2)
-    while (candidate, None, None) in g:
-        candidate = URIRef(base + f"{slug}_{i}")
-        i += 1
-
-    return candidate
-
-# -------------------- Scoring functions --------------------
-def rank_classes_for_policy(policy_text: str):
-    """
-    Returns (top_classes, sims_array)
-
-    top_classes: classes with similarity >= COVERAGE_THRESHOLD
-    sims_array: full similarity vector vs. all classes
-    """
+# -------------------- Ranking --------------------
+def rank_classes_for_policy(policy_text: str, state="all"):
+    """Rank classes by similarity to policy text."""
     if not policy_text or not policy_text.strip():
         return [], None
 
     if SIMILARITY_METHOD == "tfidf":
-        # TF-IDF
-        q_vec = vectorizer.transform([policy_text])
-        sims = cosine_similarity(q_vec, X_classes)[0]  # shape: (num_classes,)
+        query_vec = vectorizer.transform([policy_text])
+        sims = cosine_similarity(query_vec, class_matrix)[0]
 
     elif SIMILARITY_METHOD == "bert":
-        # BERT-style sentence embeddings
-        # 
         q_emb = model.encode(
             [policy_text],
             convert_to_numpy=True,
             normalize_embeddings=True,
-        )[0]  # shape: (embedding_dim,)
-
-        # class_embeddings has shape (num_classes, embedding_dim)
-        # Since everything is normalized, dot product == cosine similarity
-        sims = np.dot(class_embeddings, q_emb)  # shape: (num_classes,)
+        )[0]
+        sims = np.dot(class_embeddings, q_emb)
 
     else:
         raise ValueError(f"Unknown similarity_method: {SIMILARITY_METHOD}")
 
-    # indices of classes with similarity above the coverage threshold
-    idxs = [i for i, s in enumerate(sims) if float(s) >= COVERAGE_THRESHOLD]
+# Filter laws based on state
+    filtered_laws = LAWS
+    if state != "all":
+        state_lower = state.lower()
+        filtered_laws = []
+        
+        for law in LAWS:
+            law_id_lower = law["id"].lower()
+            law_label_lower = law.get("label", "").lower()
+            
+            # Match based on state filter
+            if state_lower in law_id_lower or state_lower in law_label_lower:
+                filtered_laws.append(law)
+            elif state_lower == "california" and ("ca" in law_id_lower or "sb-327" in law_id_lower or "sb327" in law_id_lower):
+                filtered_laws.append(law)
+            elif state_lower == "oregon" and ("or" in law_id_lower or "hb-2395" in law_id_lower or "hb2395" in law_id_lower):
+                filtered_laws.append(law)
+            elif state_lower == "nistir" and ("nistir" in law_id_lower or "8259" in law_id_lower):
+                filtered_laws.append(law)
+            elif state_lower == "plaw" and ("pl" in law_id_lower or "116-207" in law_id_lower or "public law" in law_label_lower):
+                filtered_laws.append(law)
+
+        # Get class indices that belong to filtered laws
+    allowed_class_indices = set()
+    if state == "all":
+        allowed_class_indices = set(range(len(class_iris)))
+    else:
+        for law in filtered_laws:
+            lid = law["id"]
+            class_idxs = law_to_class_idxs.get(lid, [])
+            allowed_class_indices.update(class_idxs)
+
+    idxs = [i for i, s in enumerate(sims) if float(s) >= COVERAGE_THRESHOLD and i in allowed_class_indices]
     idxs.sort(key=lambda i: sims[i], reverse=True)
 
     top_classes = []
     for i in idxs:
         c_iri = class_iris[i]
         sim_score = float(sims[i])
+        
+        # Find which law(s) this class belongs to
+        class_laws = class_to_laws.get(c_iri, set())
+        law_labels = [law["label"] for law in LAWS if law["id"] in class_laws]
+        
+         # Filter description to only show text from filtered laws
+        original_desc = class_descs.get(c_iri, "")
+        filtered_desc = original_desc
+        if state != "all" and class_laws:
+            # Only show description text from laws that match the filter
+            relevant_laws = class_laws.intersection({law["id"] for law in filtered_laws})
+            filtered_desc = filter_description_by_laws(original_desc, relevant_laws)
+        
         top_classes.append({
-    "class_iri": c_iri,
-    "class_label": class_labels[i],
-    "class_desc": class_descs.get(c_iri, ""),
-})
-
-
+            "class_iri": c_iri,
+            "class_label": class_labels[i],
+            "class_desc": class_descs.get(c_iri, ""),
+            "laws": list(class_laws),
+            "law_labels": law_labels,
+        })
 
     return top_classes, sims
 
-
-
-def compute_law_coverage(sims):
-    """
-    Given the full similarity vector for classes (sims),
-    compute coverage per law and which laws are missing entirely.
-    """
+def compute_law_coverage(sims, state="all"):
+    """Compute coverage per law and which laws are missing entirely."""
     if sims is None or not LAWS:
-        return [], [law["id"] for law in LAWS]
+        return [], [law["id"] for law in LAWS], 0.0
 
+    # FIXED: Better state filtering logic
+    filtered_laws = LAWS
+    if state != "all":
+        # Try multiple matching strategies
+        state_lower = state.lower()
+        filtered_laws = []
+        
+        for law in LAWS:
+            law_id_lower = law["id"].lower()
+            law_label_lower = law.get("label", "").lower()
+            
+            # Match if state name appears in ID or label
+            if state_lower in law_id_lower or state_lower in law_label_lower:
+                filtered_laws.append(law)
+            # Also check for common abbreviations
+            elif state_lower == "california" and ("ca" in law_id_lower or "sb-327" in law_id_lower or "sb327" in law_id_lower):
+                filtered_laws.append(law)
+            elif state_lower == "oregon" and ("or" in law_id_lower or "hb-2395" in law_id_lower or "hb2395" in law_id_lower):
+                filtered_laws.append(law)
+            elif state_lower == "nistir" and ("nistir" in law_id_lower or "8259" in law_id_lower):
+                filtered_laws.append(law)
+            elif state_lower == "plaw" and ("pl" in law_id_lower or "116-207" in law_id_lower or "public law" in law_label_lower):
+                filtered_laws.append(law)
+    
+    # DEBUG: Print what laws were found
+    print(f"[DEBUG] State filter: {state}")
+    print(f"[DEBUG] Filtered to {len(filtered_laws)} laws: {[law['id'] for law in filtered_laws]}")
+    
+    # If no laws matched the filter, return 0% coverage
+    if not filtered_laws:
+        print(f"[WARNING] No laws matched state filter '{state}'")
+        return [], [], 0.0
+    
     law_coverage = []
     missing_laws = []
-
-    for law in LAWS:
+    total_above = 0
+    total_classes = 0
+    
+    for law in filtered_laws:
         lid = law["id"]
         class_idxs = law_to_class_idxs.get(lid, [])
         if not class_idxs:
-            # ontology has no eligible classes for this law
             law_coverage.append({
                 "id": lid,
                 "label": law["label"],
@@ -418,11 +429,14 @@ def compute_law_coverage(sims):
             })
             missing_laws.append(lid)
             continue
-
+        
         scores = [float(sims[i]) for i in class_idxs]
         above = [s for s in scores if s >= COVERAGE_THRESHOLD]
         coverage_percent = 100.0 * len(above) / len(class_idxs)
-
+        
+        total_above += len(above)
+        total_classes += len(class_idxs)
+        
         law_coverage.append({
             "id": lid,
             "label": law["label"],
@@ -430,31 +444,47 @@ def compute_law_coverage(sims):
             "num_classes": len(class_idxs),
             "num_above_threshold": len(above),
         })
-
+        
         if len(above) == 0:
             missing_laws.append(lid)
+    
+    overall_percent = round(100.0 * total_above / total_classes, 2) if total_classes > 0 else 0.0
+    
+    # DEBUG: Print coverage calculation
+    print(f"[DEBUG] Total classes for filtered laws: {total_classes}")
+    print(f"[DEBUG] Classes above threshold: {total_above}")
+    print(f"[DEBUG] Overall coverage: {overall_percent}%")
+    
+    return law_coverage, missing_laws, overall_percent
 
-    return law_coverage, missing_laws
-
-
-def compute_missing_classes(sims):
-    """
-    Missing classes are related classes whose similarity is below COVERAGE_THRESHOLD.
-
-    Returns a list of:
-    {
-      "class_iri",
-      "class_label",
-      "class_desc",
-      "law_id",
-      "law_label",
-    }
-    """
+def compute_missing_classes(sims, state="all"):
+    """Find missing classes (similarity below threshold)."""
     if sims is None:
         return []
-
+    
+    # FIXED: Use same filtering logic as compute_law_coverage
+    filtered_laws = LAWS
+    if state != "all":
+        state_lower = state.lower()
+        filtered_laws = []
+        
+        for law in LAWS:
+            law_id_lower = law["id"].lower()
+            law_label_lower = law.get("label", "").lower()
+            
+            if state_lower in law_id_lower or state_lower in law_label_lower:
+                filtered_laws.append(law)
+            elif state_lower == "california" and ("ca" in law_id_lower or "sb-327" in law_id_lower or "sb327" in law_id_lower):
+                filtered_laws.append(law)
+            elif state_lower == "oregon" and ("or" in law_id_lower or "hb-2395" in law_id_lower or "hb2395" in law_id_lower):
+                filtered_laws.append(law)
+            elif state_lower == "nistir" and ("nistir" in law_id_lower or "8259" in law_id_lower):
+                filtered_laws.append(law)
+            elif state_lower == "plaw" and ("pl" in law_id_lower or "116-207" in law_id_lower or "public law" in law_label_lower):
+                filtered_laws.append(law)
+    
     missing = []
-    for law in LAWS:
+    for law in filtered_laws:
         lid = law["id"]
         llabel = law["label"]
         class_idxs = law_to_class_idxs.get(lid, [])
@@ -462,6 +492,15 @@ def compute_missing_classes(sims):
             score = float(sims[idx])
             if score < COVERAGE_THRESHOLD:
                 c_iri = class_iris[idx]
+
+                # Filter description to only show text from filtered laws
+                original_desc = class_descs.get(c_iri, "")
+                filtered_desc = original_desc
+                if state != "all":
+                    class_laws = class_to_laws.get(c_iri, set())
+                    relevant_laws = class_laws.intersection({law["id"] for law in filtered_laws})
+                    filtered_desc = filter_description_by_laws(original_desc, relevant_laws)
+                
                 missing.append({
                     "class_iri": c_iri,
                     "class_label": class_labels[idx],
@@ -471,18 +510,15 @@ def compute_missing_classes(sims):
                 })
     return missing
 
-
 # -------------------- Routes --------------------
 @app.get("/")
 def index():
     return render_template("index.html")
 
-
 @app.get("/list")
 def list_instances():
     """Return all manufacturers for the dropdown."""
     return jsonify([{"iri": m["iri"], "name": m["name"]} for m in manufacturers])
-
 
 @app.get("/detail")
 def detail():
@@ -494,12 +530,13 @@ def detail():
     - Missing classes
     """
     iri = request.args.get("iri")
+    state = request.args.get("state", "all")
+    
     if not iri:
         return jsonify({"error": "missing iri"}), 400
 
     match = next((m for m in manufacturers if m["iri"] == iri), None)
     if not match:
-        # Fallback: try to construct from graph if not in our list
         inst = URIRef(iri)
         labels = [str(o) for o in g.objects(inst, RDFS.label)]
         name = clean_manufacturer_name(labels[0]) if labels else clean_manufacturer_name(local_name(iri))
@@ -507,9 +544,9 @@ def detail():
         policy = max(policies, key=len) if policies else ""
         match = {"iri": iri, "name": name, "policy": policy}
 
-    top_classes, sims = rank_classes_for_policy(match["policy"])  #Displays top matching classes
-    law_coverage, missing_laws = compute_law_coverage(sims)
-    missing_classes = compute_missing_classes(sims)
+    top_classes, sims = rank_classes_for_policy(match["policy"], state)
+    law_coverage, missing_laws, overall_percent = compute_law_coverage(sims, state)
+    missing_classes = compute_missing_classes(sims, state)
 
     return jsonify({
         "iri": match["iri"],
@@ -519,31 +556,27 @@ def detail():
         "law_coverage": law_coverage,
         "missing_laws": missing_laws,
         "missing_classes": missing_classes,
+        "overall_coverage": overall_percent,
     })
-@app.post("/add_manufacturer") #When browser sends an HTTP POST request to /add_manufacturer, this function will run
-def add_manufacturer():
-    """
-    Create a new Manufacturer individual in the ontology
-    and append it to the in-memory list.
-    """
-    data = request.get_json(force=True) or {}    #Retrieves data from the JSON created by frontend
 
-    name = (data.get("name") or "").strip()     
+@app.post("/add_manufacturer")
+def add_manufacturer():
+    """Create a new Manufacturer individual in the ontology."""
+    data = request.get_json(force=True) or {}
+
+    name = (data.get("name") or "").strip()
     policy = (data.get("policy") or "").strip()
 
     if not name or not policy:
         return jsonify({"error": "Both name and policy are required."}), 400
 
-    # Create a unique IRI for this manufacturer
     inst_iri = generate_manufacturer_iri(name)
 
-    # Add triples to the RDF graph
     g.add((inst_iri, RDF.type, MANUFACTURER_CLS))
     g.add((inst_iri, RDFS.label, Literal(name)))
     g.add((inst_iri, POLICY_PROP, Literal(policy)))
-    g.add((inst_iri, USER_ADDED_PROP, Literal(True)))  # mark as user-added
+    g.add((inst_iri, USER_ADDED_PROP, Literal(True)))
 
-    # Add to in-memory list so it appears immediately in the dropdown
     new_entry = {
         "iri": str(inst_iri),
         "name": clean_manufacturer_name(name),
@@ -553,7 +586,6 @@ def add_manufacturer():
     manufacturers.append(new_entry)
     manufacturers.sort(key=lambda m: m["name"].lower())
 
-    # Try to persist back to the OWL file
     try:
         g.serialize(destination=str(ONTO_PATH), format="xml")
     except Exception as e:
@@ -563,11 +595,10 @@ def add_manufacturer():
         ), 500
 
     return jsonify({"iri": new_entry["iri"], "name": new_entry["name"]}), 201
+
 @app.post("/extract_pdf")
 def extract_pdf():
-    """
-    Accept a PDF upload and return extracted text as JSON.
-    """
+    """Accept a PDF upload and return extracted text as JSON."""
     if "file" not in request.files:
         return jsonify({"error": "No file field found."}), 400
 
@@ -593,7 +624,6 @@ def extract_pdf():
     except Exception as e:
         return jsonify({"error": f"Failed to read PDF: {e}"}), 500
     finally:
-        # Optional: delete after processing so you don't store student uploads
         try:
             os.remove(path)
         except Exception:
@@ -603,7 +633,6 @@ def extract_pdf():
         return jsonify({"error": "No text could be extracted from that PDF (it may be scanned images)."}), 200
 
     return jsonify({"text": extracted}), 200
-
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
