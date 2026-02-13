@@ -1,5 +1,5 @@
 {
-  "ontology_path": "C:/Users/heinz/Desktop/etc/Work/code/TAMUCT_IoT_Privacy_ResearchWork/TAMUCT_IoT_Privacy_ResearchWork/Heinrick (Both)/checkertest/data/knowledge_graph_n8259a/finalmerged.rdf",
+  "ontology_path": "data/knowledge_graph_n8259a/finalmerged.rdf",
   "manufacturer_class_iri": "http://example.org/onto.owl#Manufacturer",
   "policy_property_iri": "http://example.org/onto.owl#policy_description",
    "top_k": 8,
