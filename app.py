@@ -12,6 +12,12 @@ from PyPDF2 import PdfReader
 import os
 
 app = Flask(__name__)
+
+# Add health check FIRST - this allows Render to detect the port immediately
+@app.route('/health')
+def health_check():
+    return 'OK', 200
+
 # ---- PDF Upload Settings ----
 UPLOAD_FOLDER = "uploads"
 ALLOWED_EXTENSIONS = {"pdf"}
@@ -57,6 +63,22 @@ SPECIAL_NAME_FIXES = {
     "ebay": "eBay"
 }
 
+# -------------------- Global state (loaded lazily) --------------------
+g = None
+model = None
+vectorizer = None
+corpus_embeddings = None
+corpus_tfidf = None
+class_iris = []
+class_labels = []
+class_texts = []
+class_descs = {}
+class_to_laws = {}
+iri_to_idx = {}
+law_to_class_idxs = {}
+manufacturers = []
+_initialized = False
+
 def clean_manufacturer_name(name: str) -> str:
     """Normalize manufacturer labels so they look neat."""
     lower = name.lower().strip()
@@ -82,12 +104,6 @@ def generate_manufacturer_iri(name: str) -> URIRef:
     base_iri = "http://example.org/onto.owl#"
     return URIRef(f"{base_iri}{safe_name}")
 
-# -------------------- Load graph --------------------
-g = Graph()
-print(f"[load] {ONTO_PATH}")
-g.parse(str(ONTO_PATH))
-
-# -------------------- Helpers --------------------
 def local_name(iri: str) -> str:
     """Get a readable local name from a full IRI."""
     s = iri
@@ -119,303 +135,245 @@ def extract_law_segments(value: str):
     return {lid: segs for lid, segs in segments_by_law.items() if segs}
 
 def filter_description_by_laws(description: str, allowed_law_ids: set) -> str:
-        """Filter a description to only include text from specified laws."""
-        if not description or not allowed_law_ids:
-            return description
-    
-    # Law patterns to identify and extract
-        law_patterns = {
+    """Filter a description to only include text from specified laws."""
+    if not description or not allowed_law_ids:
+        return description
+
+    law_patterns = {
         'CA_SB_327': r'California SB[- ]?327[^.]*\.',
         'OR_HB_2395': r'Oregon HB[- ]?2395[^.]*\.',
         'NISTIR_8259': r'NISTIR 8259[^.]*\.',
         'PL_116-207': r'(?:PL 116-207|Public Law 116-207)[^.]*\.'
     }
-    
-    # Extract only sentences that mention allowed laws
-        filtered_parts = []
-        for law_id in allowed_law_ids:
-            if law_id in law_patterns:
-                pattern = law_patterns[law_id]
+
+    filtered_parts = []
+    for law_id in allowed_law_ids:
+        if law_id in law_patterns:
+            pattern = law_patterns[law_id]
             matches = re.finditer(pattern, description, re.IGNORECASE)
             for match in matches:
                 filtered_parts.append(match.group(0))
+
+    return ' '.join(filtered_parts) if filtered_parts else description
+
+def ensure_loaded():
+    """Lazy load the graph and models on first request."""
+    global g, model, vectorizer, corpus_embeddings, corpus_tfidf
+    global class_iris, class_labels, class_texts, class_descs, class_to_laws
+    global iri_to_idx, law_to_class_idxs, manufacturers, _initialized
     
-        return ' '.join(filtered_parts) if filtered_parts else description
+    if _initialized:
+        return
+    
+    print("[INIT] Starting lazy initialization...")
+    g = Graph()
+    print(f"[INIT] Parsing ontology: {ONTO_PATH}")
+    g.parse(str(ONTO_PATH))
+    
+    # Build class corpus
+    class_iris_temp = []
+    class_labels_temp = []
+    class_texts_temp = []
+    class_descs_temp = {}
+    class_to_laws_temp = {}
+    
+    for c in g.subjects(RDF.type, OWL.Class):
+        if not isinstance(c, URIRef):
+            continue
 
-# -------------------- Build class corpus --------------------
-class_iris = []
-class_labels = []
-class_texts = []
-class_descs = {}
-class_to_laws = {}
+        c_iri = str(c)
+        law_ids_for_class = set()
+        law_snippets = []
 
-for c in g.subjects(RDF.type, OWL.Class):
-    if not isinstance(c, URIRef):
-        continue
+        for pred in LAW_PREDICATES:
+            for obj in g.objects(c, pred):
+                text = str(obj)
+                segments_by_law = extract_law_segments(text)
+                for lid, segs in segments_by_law.items():
+                    law_ids_for_class.add(lid)
+                    law_snippets.extend(segs)
 
-    c_iri = str(c)
-    law_ids_for_class = set()
-    law_snippets = []
+        if not law_ids_for_class:
+            continue
 
-    for pred in LAW_PREDICATES:
-        for obj in g.objects(c, pred):
-            text = str(obj)
-            segments_by_law = extract_law_segments(text)
-            for lid, segs in segments_by_law.items():
-                law_ids_for_class.add(lid)
-                law_snippets.extend(segs)
+        labels = [str(o) for o in g.objects(c, RDFS.label)]
+        comments = [str(o) for o in g.objects(c, RDFS.comment)]
 
-    if not law_ids_for_class:
-        continue
+        if not labels:
+            labels = [clean_class_label(local_name(c_iri))]
 
-    labels = [str(o) for o in g.objects(c, RDFS.label)]
-    comments = [str(o) for o in g.objects(c, RDFS.comment)]
+        label_text = clean_class_label(" / ".join(labels))
+        combined = " ".join(labels + comments + law_snippets + [local_name(c_iri)])
 
-    if not labels:
-        labels = [clean_class_label(local_name(c_iri))]
+        if comments:
+            class_desc = " ".join(comments).strip()
+        else:
+            class_desc = " ".join(law_snippets).strip()
 
-    label_text = clean_class_label(" / ".join(labels))
-    combined = " ".join(labels + comments + law_snippets + [local_name(c_iri)])
+        class_iris_temp.append(c_iri)
+        class_labels_temp.append(label_text)
+        class_texts_temp.append(combined)
+        class_descs_temp[c_iri] = class_desc
+        class_to_laws_temp[c_iri] = law_ids_for_class
 
-    if comments:
-        class_desc = " ".join(comments).strip()
+    if not class_texts_temp:
+        raise SystemExit("No eligible classes found")
+
+    # Deduplicate
+    seen = set()
+    for i, c_iri in enumerate(class_iris_temp):
+        label = class_labels_temp[i]
+        clean_label = label.lower().strip()
+        if clean_label not in seen:
+            seen.add(clean_label)
+            class_iris.append(c_iri)
+            class_labels.append(label)
+            class_texts.append(class_texts_temp[i])
+            class_descs[c_iri] = class_descs_temp[c_iri]
+            class_to_laws[c_iri] = class_to_laws_temp[c_iri]
+
+    # Build mappings
+    iri_to_idx.update({c_iri: idx for idx, c_iri in enumerate(class_iris)})
+    law_to_class_idxs.update({law["id"]: [] for law in LAWS})
+
+    for c_iri, law_ids in class_to_laws.items():
+        idx = iri_to_idx.get(c_iri)
+        if idx is not None:
+            for lid in law_ids:
+                if lid in law_to_class_idxs:
+                    law_to_class_idxs[lid].append(idx)
+
+    # Load model
+    if SIMILARITY_METHOD == "bert":
+        print(f"[INIT] Loading BERT model: {EMBEDDING_MODEL_NAME}")
+        model = SentenceTransformer(EMBEDDING_MODEL_NAME)
+        print("[INIT] Encoding corpus...")
+        corpus_embeddings = model.encode(class_texts, show_progress_bar=False)
     else:
-        class_desc = " ".join(law_snippets).strip()
+        print("[INIT] Using TF-IDF")
+        vectorizer = TfidfVectorizer(stop_words="english", max_features=5000)
+        corpus_tfidf = vectorizer.fit_transform(class_texts)
 
-    class_iris.append(c_iri)
-    class_labels.append(label_text)
-    class_texts.append(combined)
-    class_descs[c_iri] = class_desc
-    class_to_laws[c_iri] = law_ids_for_class
+    # Build manufacturer list
+    for inst in g.subjects(RDF.type, MANUFACTURER_CLS):
+        if not isinstance(inst, URIRef):
+            continue
 
-if not class_texts:
-    raise SystemExit("No eligible classes found with law annotations matching configured keywords.")
+        labels = [str(o) for o in g.objects(inst, RDFS.label)]
+        name = clean_manufacturer_name(labels[0]) if labels else clean_manufacturer_name(local_name(str(inst)))
 
-# -------------------- DEDUPLICATE CLASSES --------------------
-seen = set()
-dedup_iris = []
-dedup_labels = []
-dedup_texts = []
-dedup_descs = {}
-dedup_laws = {}
+        if name not in ALLOWED_MANUFACTURERS:
+            continue
 
-for i, c_iri in enumerate(class_iris):
-    label = class_labels[i]
-    clean_label = label.lower().strip()
+        policies = [str(o) for o in g.objects(inst, POLICY_PROP) if isinstance(o, Literal)]
+        policy = max(policies, key=len) if policies else ""
 
-    if clean_label in seen:
-        continue
+        user_added_vals = [o for o in g.objects(inst, USER_ADDED_PROP)]
+        user_added = any(str(v).lower() == "true" for v in user_added_vals)
 
-    seen.add(clean_label)
-    dedup_iris.append(c_iri)
-    dedup_labels.append(label)
-    dedup_texts.append(class_texts[i])
-    dedup_descs[c_iri] = class_descs[c_iri]
-    dedup_laws[c_iri] = class_to_laws[c_iri]
-
-class_iris = dedup_iris
-class_labels = dedup_labels
-class_texts = dedup_texts
-class_descs = dedup_descs
-class_to_laws = dedup_laws
-
-# -------------------- Class → laws & law → classes --------------------
-iri_to_idx = {c_iri: idx for idx, c_iri in enumerate(class_iris)}
-law_to_class_idxs = {law["id"]: [] for law in LAWS}
-
-for c_iri, law_ids in class_to_laws.items():
-    idx = iri_to_idx.get(c_iri)
-    if idx is None:
-        continue
-    for lid in law_ids:
-        if lid in law_to_class_idxs:
-            law_to_class_idxs[lid].append(idx)
-
-for law in LAWS:
-    lid = law["id"]
-    print(f"[init] Law {lid} has {len(law_to_class_idxs.get(lid, []))} related classes")
-
-# -------------------- Build manufacturers list --------------------
-manufacturers = []
-for inst in g.subjects(RDF.type, MANUFACTURER_CLS):
-    if not isinstance(inst, URIRef):
-        continue
-    
-    inst_iri = str(inst)
-    user_added = any(g.objects(inst, USER_ADDED_PROP))
-    
-    labels = [str(o) for o in g.objects(inst, RDFS.label)]
-    if not labels:
-        name = clean_manufacturer_name(local_name(inst_iri))
-    else:
-        name = clean_manufacturer_name(labels[0])
-    
-    if name not in ALLOWED_MANUFACTURERS and not user_added:
-        continue
-    
-    policies = [str(o) for o in g.objects(inst, POLICY_PROP) if isinstance(o, Literal)]
-    policy = max(policies, key=len) if policies else ""
-    
-    manufacturers.append({
-        "iri": inst_iri,
-        "name": name,
-        "policy": policy,
-        "user_added": user_added
-    })
-
-manufacturers.sort(key=lambda m: m["name"].lower())
-print(f"[init] Loaded {len(manufacturers)} manufacturers")
-
-# -------------------- Prepare similarity model --------------------
-if SIMILARITY_METHOD == "tfidf":
-    print("[init] Using TF-IDF similarity")
-    vectorizer = TfidfVectorizer(
-        lowercase=True,
-        stop_words="english",
-        ngram_range=(1, 2),
-        max_features=1000
-    )
-    class_matrix = vectorizer.fit_transform(class_texts)
-
-elif SIMILARITY_METHOD == "bert":
-    print(f"[init] Using BERT embeddings with model: {EMBEDDING_MODEL_NAME}")
-    model = SentenceTransformer(EMBEDDING_MODEL_NAME)
-    class_embeddings = model.encode(
-        class_texts,
-        convert_to_numpy=True,
-        normalize_embeddings=True,
-        show_progress_bar=True
-    )
-
-else:
-    raise ValueError(f"Unknown similarity_method: {SIMILARITY_METHOD}")
-
-# -------------------- Ranking --------------------
-def rank_classes_for_policy(policy_text: str, state="all"):
-    """Rank classes by similarity to policy text."""
-    if not policy_text or not policy_text.strip():
-        return [], None
-
-    if SIMILARITY_METHOD == "tfidf":
-        query_vec = vectorizer.transform([policy_text])
-        sims = cosine_similarity(query_vec, class_matrix)[0]
-
-    elif SIMILARITY_METHOD == "bert":
-        q_emb = model.encode(
-            [policy_text],
-            convert_to_numpy=True,
-            normalize_embeddings=True,
-        )[0]
-        sims = np.dot(class_embeddings, q_emb)
-
-    else:
-        raise ValueError(f"Unknown similarity_method: {SIMILARITY_METHOD}")
-
-# Filter laws based on state
-    filtered_laws = LAWS
-    if state != "all":
-        state_lower = state.lower()
-        filtered_laws = []
-        
-        for law in LAWS:
-            law_id_lower = law["id"].lower()
-            law_label_lower = law.get("label", "").lower()
-            
-            # Match based on state filter
-            if state_lower in law_id_lower or state_lower in law_label_lower:
-                filtered_laws.append(law)
-            elif state_lower == "california" and ("ca" in law_id_lower or "sb-327" in law_id_lower or "sb327" in law_id_lower):
-                filtered_laws.append(law)
-            elif state_lower == "oregon" and ("or" in law_id_lower or "hb-2395" in law_id_lower or "hb2395" in law_id_lower):
-                filtered_laws.append(law)
-            elif state_lower == "nistir" and ("nistir" in law_id_lower or "8259" in law_id_lower):
-                filtered_laws.append(law)
-            elif state_lower == "plaw" and ("pl" in law_id_lower or "116-207" in law_id_lower or "public law" in law_label_lower):
-                filtered_laws.append(law)
-
-        # Get class indices that belong to filtered laws
-    allowed_class_indices = set()
-    if state == "all":
-        allowed_class_indices = set(range(len(class_iris)))
-    else:
-        for law in filtered_laws:
-            lid = law["id"]
-            class_idxs = law_to_class_idxs.get(lid, [])
-            allowed_class_indices.update(class_idxs)
-
-    idxs = [i for i, s in enumerate(sims) if float(s) >= COVERAGE_THRESHOLD and i in allowed_class_indices]
-    idxs.sort(key=lambda i: sims[i], reverse=True)
-
-    top_classes = []
-    for i in idxs:
-        c_iri = class_iris[i]
-        sim_score = float(sims[i])
-        
-        # Find which law(s) this class belongs to
-        class_laws = class_to_laws.get(c_iri, set())
-        law_labels = [law["label"] for law in LAWS if law["id"] in class_laws]
-        
-         # Filter description to only show text from filtered laws
-        original_desc = class_descs.get(c_iri, "")
-        filtered_desc = original_desc
-        if state != "all" and class_laws:
-            # Only show description text from laws that match the filter
-            relevant_laws = class_laws.intersection({law["id"] for law in filtered_laws})
-            filtered_desc = filter_description_by_laws(original_desc, relevant_laws)
-        
-        top_classes.append({
-            "class_iri": c_iri,
-            "class_label": class_labels[i],
-            "class_desc": class_descs.get(c_iri, ""),
-            "laws": list(class_laws),
-            "law_labels": law_labels,
+        manufacturers.append({
+            "iri": str(inst),
+            "name": name,
+            "policy": policy,
+            "user_added": user_added,
         })
 
-    return top_classes, sims
+    manufacturers.sort(key=lambda m: m["name"].lower())
+    _initialized = True
+    print(f"[INIT] Complete! {len(manufacturers)} manufacturers, {len(class_iris)} classes")
 
-def compute_law_coverage(sims, state="all"):
-    """Compute coverage per law and which laws are missing entirely."""
-    if sims is None or not LAWS:
-        return [], [law["id"] for law in LAWS], 0.0
+def rank_classes_for_policy(policy_text: str, state="all"):
+    """Rank classes by similarity to policy text."""
+    ensure_loaded()
+    
+    if not policy_text.strip():
+        return [], None
 
-    # FIXED: Better state filtering logic
+    if SIMILARITY_METHOD == "bert":
+        query_emb = model.encode([policy_text], show_progress_bar=False)
+        sims = cosine_similarity(query_emb, corpus_embeddings)[0]
+    else:
+        query_vec = vectorizer.transform([policy_text])
+        sims = cosine_similarity(query_vec, corpus_tfidf)[0]
+
+    # Filter by state
     filtered_laws = LAWS
     if state != "all":
-        # Try multiple matching strategies
         state_lower = state.lower()
         filtered_laws = []
-        
         for law in LAWS:
             law_id_lower = law["id"].lower()
             law_label_lower = law.get("label", "").lower()
-            
-            # Match if state name appears in ID or label
             if state_lower in law_id_lower or state_lower in law_label_lower:
                 filtered_laws.append(law)
-            # Also check for common abbreviations
-            elif state_lower == "california" and ("ca" in law_id_lower or "sb-327" in law_id_lower or "sb327" in law_id_lower):
+            elif state_lower == "california" and ("ca" in law_id_lower or "sb-327" in law_id_lower):
                 filtered_laws.append(law)
-            elif state_lower == "oregon" and ("or" in law_id_lower or "hb-2395" in law_id_lower or "hb2395" in law_id_lower):
+            elif state_lower == "oregon" and ("or" in law_id_lower or "hb-2395" in law_id_lower):
                 filtered_laws.append(law)
             elif state_lower == "nistir" and ("nistir" in law_id_lower or "8259" in law_id_lower):
                 filtered_laws.append(law)
-            elif state_lower == "plaw" and ("pl" in law_id_lower or "116-207" in law_id_lower or "public law" in law_label_lower):
+            elif state_lower == "plaw" and ("pl" in law_id_lower or "116-207" in law_id_lower):
                 filtered_laws.append(law)
-    
-    # DEBUG: Print what laws were found
-    print(f"[DEBUG] State filter: {state}")
-    print(f"[DEBUG] Filtered to {len(filtered_laws)} laws: {[law['id'] for law in filtered_laws]}")
-    
-    # If no laws matched the filter, return 0% coverage
-    if not filtered_laws:
-        print(f"[WARNING] No laws matched state filter '{state}'")
+
+    filtered_class_idxs = set()
+    for law in filtered_laws:
+        lid = law["id"]
+        filtered_class_idxs.update(law_to_class_idxs.get(lid, []))
+
+    if not filtered_class_idxs:
+        return [], None
+
+    scored = [(i, float(sims[i])) for i in filtered_class_idxs]
+    scored.sort(key=lambda x: x[1], reverse=True)
+
+    top = scored[:TOP_K]
+    results = []
+    for idx, score in top:
+        c_iri = class_iris[idx]
+        class_laws = class_to_laws.get(c_iri, set())
+        relevant_laws = class_laws.intersection({law["id"] for law in filtered_laws})
+        filtered_desc = filter_description_by_laws(class_descs.get(c_iri, ""), relevant_laws)
+        
+        results.append({
+            "iri": c_iri,
+            "label": class_labels[idx],
+            "description": filtered_desc,
+            "similarity": round(score, 4),
+        })
+
+    return results, sims
+
+def compute_law_coverage(sims, state="all"):
+    """Compute coverage statistics for each law."""
+    if sims is None:
         return [], [], 0.0
-    
+
+    filtered_laws = LAWS
+    if state != "all":
+        state_lower = state.lower()
+        filtered_laws = []
+        for law in LAWS:
+            law_id_lower = law["id"].lower()
+            law_label_lower = law.get("label", "").lower()
+            if state_lower in law_id_lower or state_lower in law_label_lower:
+                filtered_laws.append(law)
+            elif state_lower == "california" and ("ca" in law_id_lower or "sb-327" in law_id_lower):
+                filtered_laws.append(law)
+            elif state_lower == "oregon" and ("or" in law_id_lower or "hb-2395" in law_id_lower):
+                filtered_laws.append(law)
+            elif state_lower == "nistir" and ("nistir" in law_id_lower or "8259" in law_id_lower):
+                filtered_laws.append(law)
+            elif state_lower == "plaw" and ("pl" in law_id_lower or "116-207" in law_id_lower):
+                filtered_laws.append(law)
+
+    if not filtered_laws:
+        return [], [], 0.0
+
     law_coverage = []
     missing_laws = []
     total_above = 0
     total_classes = 0
-    
+
     for law in filtered_laws:
         lid = law["id"]
         class_idxs = law_to_class_idxs.get(lid, [])
@@ -429,14 +387,14 @@ def compute_law_coverage(sims, state="all"):
             })
             missing_laws.append(lid)
             continue
-        
+
         scores = [float(sims[i]) for i in class_idxs]
         above = [s for s in scores if s >= COVERAGE_THRESHOLD]
         coverage_percent = 100.0 * len(above) / len(class_idxs)
-        
+
         total_above += len(above)
         total_classes += len(class_idxs)
-        
+
         law_coverage.append({
             "id": lid,
             "label": law["label"],
@@ -444,45 +402,36 @@ def compute_law_coverage(sims, state="all"):
             "num_classes": len(class_idxs),
             "num_above_threshold": len(above),
         })
-        
+
         if len(above) == 0:
             missing_laws.append(lid)
-    
+
     overall_percent = round(100.0 * total_above / total_classes, 2) if total_classes > 0 else 0.0
-    
-    # DEBUG: Print coverage calculation
-    print(f"[DEBUG] Total classes for filtered laws: {total_classes}")
-    print(f"[DEBUG] Classes above threshold: {total_above}")
-    print(f"[DEBUG] Overall coverage: {overall_percent}%")
-    
     return law_coverage, missing_laws, overall_percent
 
 def compute_missing_classes(sims, state="all"):
     """Find missing classes (similarity below threshold)."""
     if sims is None:
         return []
-    
-    # FIXED: Use same filtering logic as compute_law_coverage
+
     filtered_laws = LAWS
     if state != "all":
         state_lower = state.lower()
         filtered_laws = []
-        
         for law in LAWS:
             law_id_lower = law["id"].lower()
             law_label_lower = law.get("label", "").lower()
-            
             if state_lower in law_id_lower or state_lower in law_label_lower:
                 filtered_laws.append(law)
-            elif state_lower == "california" and ("ca" in law_id_lower or "sb-327" in law_id_lower or "sb327" in law_id_lower):
+            elif state_lower == "california" and ("ca" in law_id_lower or "sb-327" in law_id_lower):
                 filtered_laws.append(law)
-            elif state_lower == "oregon" and ("or" in law_id_lower or "hb-2395" in law_id_lower or "hb2395" in law_id_lower):
+            elif state_lower == "oregon" and ("or" in law_id_lower or "hb-2395" in law_id_lower):
                 filtered_laws.append(law)
             elif state_lower == "nistir" and ("nistir" in law_id_lower or "8259" in law_id_lower):
                 filtered_laws.append(law)
-            elif state_lower == "plaw" and ("pl" in law_id_lower or "116-207" in law_id_lower or "public law" in law_label_lower):
+            elif state_lower == "plaw" and ("pl" in law_id_lower or "116-207" in law_id_lower):
                 filtered_laws.append(law)
-    
+
     missing = []
     for law in filtered_laws:
         lid = law["id"]
@@ -492,19 +441,17 @@ def compute_missing_classes(sims, state="all"):
             score = float(sims[idx])
             if score < COVERAGE_THRESHOLD:
                 c_iri = class_iris[idx]
-
-                # Filter description to only show text from filtered laws
                 original_desc = class_descs.get(c_iri, "")
                 filtered_desc = original_desc
                 if state != "all":
                     class_laws = class_to_laws.get(c_iri, set())
                     relevant_laws = class_laws.intersection({law["id"] for law in filtered_laws})
                     filtered_desc = filter_description_by_laws(original_desc, relevant_laws)
-                
+
                 missing.append({
                     "class_iri": c_iri,
                     "class_label": class_labels[idx],
-                    "class_desc": class_descs.get(c_iri, ""),
+                    "class_desc": filtered_desc,
                     "law_id": lid,
                     "law_label": llabel,
                 })
@@ -513,11 +460,13 @@ def compute_missing_classes(sims, state="all"):
 # -------------------- Routes --------------------
 @app.get("/")
 def index():
+    ensure_loaded()
     return render_template("index.html")
 
 @app.get("/list")
 def list_instances():
     """Return all manufacturers for the dropdown."""
+    ensure_loaded()
     return jsonify([{"iri": m["iri"], "name": m["name"]} for m in manufacturers])
 
 @app.get("/detail")
@@ -529,6 +478,7 @@ def detail():
     - Law coverage & missing laws
     - Missing classes
     """
+    ensure_loaded()
     iri = request.args.get("iri")
     state = request.args.get("state", "all")
     
@@ -562,6 +512,7 @@ def detail():
 @app.post("/add_manufacturer")
 def add_manufacturer():
     """Create a new Manufacturer individual in the ontology."""
+    ensure_loaded()
     data = request.get_json(force=True) or {}
 
     name = (data.get("name") or "").strip()
