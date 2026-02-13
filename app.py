@@ -278,14 +278,22 @@ if SIMILARITY_METHOD == "tfidf":
     class_matrix = vectorizer.fit_transform(class_texts)
 
 elif SIMILARITY_METHOD == "bert":
-    print(f"[init] Using BERT embeddings with model: {EMBEDDING_MODEL_NAME}")
-    model = SentenceTransformer(EMBEDDING_MODEL_NAME)
-    class_embeddings = model.encode(
-        class_texts,
-        convert_to_numpy=True,
-        normalize_embeddings=True,
-        show_progress_bar=True
-    )
+    print(f"[init] Will use BERT embeddings with model: {EMBEDDING_MODEL_NAME}")
+    model = None
+    class_embeddings = None
+    
+    def load_bert_model():
+        global model, class_embeddings
+        if model is None:
+            print(f"[lazy-load] Loading BERT model: {EMBEDDING_MODEL_NAME}")
+            model = SentenceTransformer(EMBEDDING_MODEL_NAME)
+            class_embeddings = model.encode(
+                class_texts,
+                convert_to_numpy=True,
+                normalize_embeddings=True,
+                show_progress_bar=True
+            )
+            print("[lazy-load] BERT model loaded successfully")
 
 else:
     raise ValueError(f"Unknown similarity_method: {SIMILARITY_METHOD}")
@@ -301,6 +309,7 @@ def rank_classes_for_policy(policy_text: str, state="all"):
         sims = cosine_similarity(query_vec, class_matrix)[0]
 
     elif SIMILARITY_METHOD == "bert":
+        load_bert_model()  # Ensure model is loaded
         q_emb = model.encode(
             [policy_text],
             convert_to_numpy=True,
@@ -511,6 +520,11 @@ def compute_missing_classes(sims, state="all"):
     return missing
 
 # -------------------- Routes --------------------
+@app.get("/health")
+def health():
+    """Health check endpoint for Render"""
+    return jsonify({"status": "ok"}), 200
+
 @app.get("/")
 def index():
     return render_template("index.html")
@@ -635,4 +649,6 @@ def extract_pdf():
     return jsonify({"text": extracted}), 200
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    import os
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)
