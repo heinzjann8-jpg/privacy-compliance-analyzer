@@ -31,6 +31,6 @@
   ],
   "coverage_threshold": 0.20,
 
-  "similarity_method": "bert",              
+  "similarity_method": "tfidf",              
   "embedding_model_name": "all-MiniLM-L6-v2" 
 }
