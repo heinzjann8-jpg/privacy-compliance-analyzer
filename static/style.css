@@ -1,11 +1,9 @@
 :root {
-  --bg: #f5f5f8;
-  --panel: #ffffff:root {
-  --bg: #f5f5f8;
+  --bg: linear-gradient(to bottom, #0066cc, white);
   --panel: #ffffff;
   --text: #444444;
   --muted: #6b7280;
-  --accent: #0814c1;
+  --accent: #0066cc;
   --chip: #e5e7eb;
   --border: #d1d5db;
   --policy-bg: #f9fafb;
