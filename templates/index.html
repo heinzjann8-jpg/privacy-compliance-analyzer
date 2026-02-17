@@ -9,13 +9,14 @@
   <body>
   <button id="darkModeToggle">🌙</button>
     <div class="container">
-      <h1 style="text-align: center;">Privacy Policy Compliance Analyzer</h1>
-      <p class="subtitle">
+      <h1 style="text-align: center; color: white; font-size: 46px; font-family: 'Arial Black', sans-serif;">Privacy Policy Compliance Analyzer</h1>
+      <p class="subtitle;" style="color: white;">
         Select a manufacturer & corresponding Privacy Policy from the list or input your own manufacturer and Privacy Policy to and check coverage
          under California, Oregon, and federal laws and standards (NISTIR 8259 & PL 116-207).
       </p>
 
-      <!-- Manufacturer selector -->
+<!-- ---------------------------------------------------------------- MANUFACTURER SELECT --------------------------------------------------------- -->
+
       <div class="panel">
         <label for="manufacturerSelect"><strong>Select Manufacturer:</strong></label>
         <div class="row">
@@ -25,7 +26,8 @@
         <button id="btnToggleAdd" style="margin-top: 12px;">+ Add a Manufacturer</button>
         <div class="muted small" id="countNote"></div>
         
-        <!-- Add Manufacturer -->
+<!-- ---------------------------------------------------------------- ADD A MANUFACTURER --------------------------------------------------------- -->
+
       <div class="panel hidden" id="addManufacturerPanel" style="margin-top: 24px;">
 
         <strong>Add a Manufacturer<strong>
@@ -64,6 +66,8 @@
 
         <hr style="margin-top: 20px;margin-bottom: 20px;">
 
+<!-- ---------------------------------------------------------------- COVERAGE --------------------------------------------------------- -->
+
         <h3 id="lawHeader">Law Coverage</h3>
         <div style="margin-bottom: 16px;">
           <label for="stateFilter"><strong>Filter by State:</strong></label>
@@ -89,12 +93,21 @@
           <div class="col">
             <h3 id="missingHeader">Non-Compliant Means</h3>
             <div id="missingClasses" class="cards"></div>
+
           </div>
           </div>
-    
+        <hr style="margin-top: 20px;margin-bottom: 20px;">
+<!-- ---------------------------------------------------------------- PRIVACY BOT --------------------------------------------------------- -->
+
+          <h1 style="text-align: center;">Privacy Bot Assistant (WIP)</h1>
+          <p style="text-align: center; margin-top: 8px; margin-bottom: 8px; font-weight: normal;">Ask me if your selected manufacturer covers a certain compliance!</p>
+          <textarea id="newPolicy" rows="4"
+            placeholder="'Does ____ cover ____?'"
+            style="width:100%; padding:6px 8px; margin-top:4px; border-radius:8px; border:1px solid var(--border);"></textarea>
       
     </div>
 
+<!-- ---------------------------------------------------------------- LEARN MORE SECTION --------------------------------------------------------- -->
       <div class="panel" style="margin-top: 32px;">
   <h2>Learn more about IoT Information Privacy Compliances</h2>
   <p style="margin-top: 8px; margin-bottom: 24px; font-weight: normal;">
