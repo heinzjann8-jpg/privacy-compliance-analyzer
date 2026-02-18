@@ -29,7 +29,7 @@
       "keywords": ["NISTIR 8259", "NIST"]
     }
   ],
-  "coverage_threshold": 0.20,
+  "coverage_threshold": 0.05,
 
   "similarity_method": "tfidf",              
   "embedding_model_name": "all-MiniLM-L6-v2" 
