@@ -10,6 +10,9 @@ from sentence_transformers import SentenceTransformer
 from werkzeug.utils import secure_filename
 from PyPDF2 import PdfReader
 import os
+from dotenv import load_dotenv          
+from groq import Groq                   
+load_dotenv()                           
 
 app = Flask(__name__)
 # ---- PDF Upload Settings ----
@@ -83,9 +86,118 @@ def generate_manufacturer_iri(name: str) -> URIRef:
     return URIRef(f"{base_iri}{safe_name}")
 
 # -------------------- Load graph --------------------
+SWRL_COVERS = URIRef("http://example.org/onto.owl#swrl_covers")
+INFERRED_PATH = ONTO_PATH.parent / "inferred_merged.rdf"
+SWRL_ACTIVE = False
+
+def run_swrl_reasoner() -> bool:
+    """
+    Manual SWRL-equivalent reasoning using rdflib.
+    Fires keyword rules against policy_description and writes
+    swrl_covers triples into the inferred ontology.
+    Bypasses owlready2 entirely.
+    """
+    try:
+        import shutil
+
+        # SWRL rules — keyword → class IRI mapping
+        SWRL_RULES = [
+            ("authentication",      "http://yourdomain.org/ontology/laws#Authentication"),
+            ("unique password",     "http://yourdomain.org/ontology/laws#Authentication"),
+            ("encrypt",             "http://example.org/onto.owl#Security_Mechanism"),
+            ("unauthorized access", "http://yourdomain.org/ontology/laws#Unauthorized_Access_Element"),
+            ("software update",     "http://yourdomain.org/ontology/laws#Updates"),
+            ("patch",               "http://example.org/onto.owl#PatchAvailability"),
+            ("configuration",       "http://example.org/onto.owl#ConfigurationManagement"),
+            ("data collection",     "http://yourdomain.org/ontology/laws#Data_Collection_Practice"),
+            ("third party",         "http://yourdomain.org/ontology/laws#Data_Sharing_Practice"),
+            ("personal information","http://yourdomain.org/ontology/laws#Personal_Information"),
+            ("network",             "http://example.org/onto.owl#networkInterface"),
+            ("secure development",  "http://example.org/onto.owl#SecureDevelopment"),
+            ("cybersecurity",       "http://example.org/onto.owl#CybersecurityCapability"),
+            ("security standard",   "http://example.org/onto.owl#MinimumSecurityStandards"),
+            ("compliance",          "http://yourdomain.org/ontology/laws#Violation"),
+        ]
+
+        # Load raw ontology into working graph
+        inferred_g = Graph()
+        inferred_g.parse(str(ONTO_PATH))
+        print(f"[swrl] Loaded {len(inferred_g)} triples from raw ontology")
+
+        # Fire rules against every manufacturer
+        rules_fired = 0
+        for inst in inferred_g.subjects(RDF.type, MANUFACTURER_CLS):
+            if not isinstance(inst, URIRef):
+                continue
+            policies = [
+                str(o) for o in inferred_g.objects(inst, POLICY_PROP)
+                if isinstance(o, Literal)
+            ]
+            if not policies:
+                continue
+            policy_text = max(policies, key=len).lower()
+
+            for keyword, class_iri in SWRL_RULES:
+                if keyword.lower() in policy_text:
+                    inferred_g.add((
+                        inst,
+                        SWRL_COVERS,
+                        URIRef(class_iri)
+                    ))
+                    rules_fired += 1
+
+        print(f"[swrl] Fired {rules_fired} rule inferences")
+
+        # Save inferred graph
+        inferred_g.serialize(destination=str(INFERRED_PATH), format="xml")
+        print(f"[swrl] Inferred ontology saved → {INFERRED_PATH}")
+        return True
+
+    except Exception as e:
+        print(f"[swrl] Reasoner failed: {e}")
+        return False
+
+# -------------------- Load graph (with SWRL) --------------------
+def is_valid_rdf(path: Path) -> bool:
+    """Check if an RDF file exists and is non-empty and parseable."""
+    try:
+        if not path.exists():
+            return False
+        if path.stat().st_size < 100:
+            print(f"[swrl] {path.name} is empty or too small — discarding")
+            path.unlink()
+            return False
+        test = Graph()
+        test.parse(str(path))
+        return len(test) > 0
+    except Exception as e:
+        print(f"[swrl] {path.name} failed validation: {e}")
+        try:
+            path.unlink()
+        except Exception:
+            pass
+        return False
+
 g = Graph()
-print(f"[load] {ONTO_PATH}")
-g.parse(str(ONTO_PATH))
+SWRL_ACTIVE = False
+
+if is_valid_rdf(INFERRED_PATH):
+    print(f"[load] Loading valid inferred ontology → {INFERRED_PATH}")
+    g.parse(str(INFERRED_PATH))
+    SWRL_ACTIVE = True
+else:
+    print(f"[load] No valid inferred ontology found — attempting SWRL reasoning")
+    success = run_swrl_reasoner()
+    if success and is_valid_rdf(INFERRED_PATH):
+        print(f"[load] Loading freshly inferred ontology → {INFERRED_PATH}")
+        g.parse(str(INFERRED_PATH))
+        SWRL_ACTIVE = True
+    else:
+        print(f"[load] Falling back to raw ontology → {ONTO_PATH}")
+        g.parse(str(ONTO_PATH))
+        SWRL_ACTIVE = False
+
+print(f"[swrl] SWRL layer active: {SWRL_ACTIVE}")
 
 # -------------------- Helpers --------------------
 def local_name(iri: str) -> str:
@@ -97,6 +209,31 @@ def local_name(iri: str) -> str:
     s = re.sub(r"([a-z])([A-Z])", r"\1 \2", s)
     s = s.replace("_", " ").replace("-", " ")
     return s
+
+#----------look
+def get_swrl_covered_classes(manufacturer_iri: str) -> set:
+    """Returns set of class IRIs confirmed by SWRL rules."""
+    if not SWRL_ACTIVE:
+        return set()
+    inst = URIRef(manufacturer_iri)
+    return {str(obj) for obj in g.objects(inst, SWRL_COVERS)}
+
+def get_hybrid_tier(bert_covered: bool, swrl_covered: bool) -> dict:
+    """
+    Returns hybrid confidence tier based on SWRL + BERT agreement.
+    Tier 1: both agree covered       → HIGH
+    Tier 2: SWRL yes, BERT no        → keyword present, weak context
+    Tier 3: BERT yes, SWRL no        → semantic match, no keyword
+    Tier 4: both agree not covered   → confirmed gap
+    """
+    if bert_covered and swrl_covered:
+        return {"tier": 1, "label": "HIGH", "explanation": "Both SWRL and BERT confirm coverage"}
+    elif swrl_covered and not bert_covered:
+        return {"tier": 2, "label": "MEDIUM-SWRL", "explanation": "Keyword present but weak semantic context"}
+    elif bert_covered and not swrl_covered:
+        return {"tier": 3, "label": "MEDIUM-BERT", "explanation": "Semantic match without explicit keyword"}
+    else:
+        return {"tier": 4, "label": "NONE", "explanation": "Confirmed gap — neither method confirms coverage"}
 
 def extract_law_segments(value: str):
     """Extract law-specific segments from text."""
@@ -510,6 +647,109 @@ def compute_missing_classes(sims, state="all"):
                 })
     return missing
 
+# -------------------- SPARQL Validation --------------------
+def sparql_validate_manufacturer(manufacturer_iri: str, sims) -> dict:
+    """
+    Cross-validates BERT decisions against keyword queries.
+    Returns agreement rate and disagreement breakdown.
+    """
+    if sims is None:
+        return {"error": "No sims", "agreement_rate": 0, "total_pairs": 0,
+                "agreed": 0, "both_covered": 0, "both_not_covered": 0,
+                "bert_only": 0, "sparql_only": 0}
+
+    # Get policy text directly
+    inst = URIRef(manufacturer_iri)
+    policies = [str(o) for o in g.objects(inst, POLICY_PROP)
+                if isinstance(o, Literal)]
+    policy_text = max(policies, key=len).lower() if policies else ""
+
+    if not policy_text:
+        return {"error": "No policy", "agreement_rate": 0, "total_pairs": 0,
+                "agreed": 0, "both_covered": 0, "both_not_covered": 0,
+                "bert_only": 0, "sparql_only": 0}
+
+    # Keyword map defined ONCE outside the loop
+    keyword_map = {
+        "authentication":            ["authentication", "password", "credential", "login", "unique", "verify", "identity"],
+        "unauthorized access":       ["unauthorized", "access control", "breach", "intrusion", "restrict", "prohibited"],
+        "security mechanism":        ["encryption", "encrypt", "secure", "cryptographic", "tls", "ssl", "protect", "safeguard"],
+        "updates":                   ["update", "patch", "upgrade", "firmware", "maintenance", "release", "version"],
+        "patch":                     ["patch", "update", "fix", "vulnerability", "hotfix", "software update"],
+        "configuration management":  ["configuration", "config", "setting", "parameter", "setup", "manage"],
+        "data collection practice":  ["data collection", "collect", "gather", "personal data", "information we collect"],
+        "data sharing practice":     ["third party", "sharing", "disclose", "transfer", "partners", "affiliates", "vendor"],
+        "personal information":      ["personal information", "personal data", "pii", "personally identifiable", "your information"],
+        "network interface":         ["network", "internet", "connectivity", "wifi", "wireless", "bluetooth", "protocol"],
+        "secure development":        ["secure development", "security testing", "vulnerability", "audit", "penetration"],
+        "cybersecurity capability":  ["cybersecurity", "security", "cyber", "protection", "threat", "safeguard"],
+        "minimum security standards":["security standard", "minimum security", "baseline", "comply", "requirement", "standard"],
+        "core baseline":             ["baseline", "minimum", "standard", "requirement", "foundational", "essential"],
+        "iot device":                ["device", "iot", "connected", "sensor", "smart device", "product", "hardware"],
+        "iot platform":              ["platform", "cloud", "service", "infrastructure", "system", "backend", "ecosystem"],
+        "violation":                 ["compliance", "comply", "violation", "enforce", "regulation", "legal", "obligation"],
+        "non compliant":             ["non-compliant", "violation", "breach", "failure", "penalty", "fine"],
+        "cybersecurity risk":        ["risk", "threat", "vulnerability", "exposure", "mitigation", "cyber risk"],
+        "secure software":           ["software", "application", "code", "program", "secure code", "development"],
+        "patch availability":        ["patch", "update available", "security fix", "software patch", "release"],
+        "conventional it device":    ["device", "computer", "server", "hardware", "equipment", "machine"],
+        "transducer":                ["sensor", "transducer", "actuator", "detector", "measurement", "monitor"],
+        "standards":                 ["standard", "nist", "iso", "compliance", "framework", "guideline", "requirement"],
+    }
+
+    agreed = 0
+    total = 0
+    both_covered = 0
+    both_not_covered = 0
+    bert_only = 0
+    sparql_only = 0
+
+    for idx, c_iri in enumerate(class_iris):
+        label = class_labels[idx]
+        raw_label = label.lower().replace("/", " ").strip()
+        bert_score = float(sims[idx])
+        bert_decision = bert_score >= COVERAGE_THRESHOLD
+
+        # Get keywords for this class
+        expanded = keyword_map.get(raw_label, None)
+        if not expanded:
+            for key in keyword_map:
+                if key in raw_label or raw_label in key:
+                    expanded = keyword_map[key]
+                    break
+        if not expanded:
+            words = [w for w in raw_label.split() if len(w) > 3]
+            expanded = words if words else [raw_label[:10]]
+
+        # Search policy text directly using Python string matching
+        sparql_result = any(kw in policy_text for kw in expanded)
+
+        # Count results
+        total += 1
+        if bert_decision == sparql_result:
+            agreed += 1
+
+        if bert_decision and sparql_result:
+            both_covered += 1
+        elif not bert_decision and not sparql_result:
+            both_not_covered += 1
+        elif bert_decision and not sparql_result:
+            bert_only += 1
+        else:
+            sparql_only += 1
+
+    agreement_rate = round(100.0 * agreed / total, 2) if total > 0 else 0.0
+
+    return {
+        "total_pairs": total,
+        "agreed": agreed,
+        "agreement_rate": agreement_rate,
+        "both_covered": both_covered,
+        "both_not_covered": both_not_covered,
+        "bert_only": bert_only,
+        "sparql_only": sparql_only
+    }
+
 # -------------------- Routes --------------------
 @app.get("/")
 def index():
@@ -522,16 +762,9 @@ def list_instances():
 
 @app.get("/detail")
 def detail():
-    """
-    For a selected manufacturer:
-    - Return its policy text
-    - Top class matches
-    - Law coverage & missing laws
-    - Missing classes
-    """
     iri = request.args.get("iri")
     state = request.args.get("state", "all")
-    
+
     if not iri:
         return jsonify({"error": "missing iri"}), 400
 
@@ -548,6 +781,16 @@ def detail():
     law_coverage, missing_laws, overall_percent = compute_law_coverage(sims, state)
     missing_classes = compute_missing_classes(sims, state)
 
+    # SWRL hybrid tiers for top classes
+    swrl_covered = get_swrl_covered_classes(iri)
+    for cls in top_classes:
+        bert_covered = True  # already above threshold to be in top_classes
+        swrl_decision = cls["class_iri"] in swrl_covered
+        cls["hybrid"] = get_hybrid_tier(bert_covered, swrl_decision)
+
+    # SPARQL auto-validation — runs on every detail call
+    sparql_validation = sparql_validate_manufacturer(iri, sims)
+
     return jsonify({
         "iri": match["iri"],
         "name": match["name"],
@@ -557,6 +800,8 @@ def detail():
         "missing_laws": missing_laws,
         "missing_classes": missing_classes,
         "overall_coverage": overall_percent,
+        "sparql_validation": sparql_validation,
+        "swrl_active": SWRL_ACTIVE,
     })
 
 @app.post("/add_manufacturer")
@@ -634,6 +879,34 @@ def extract_pdf():
 
     return jsonify({"text": extracted}), 200
 
+@app.get("/sparql_validate_all")
+def sparql_validate_all():
+    """
+    Run SPARQL vs BERT cross-validation for ALL manufacturers.
+    Use this to generate your paper's agreement rate table.
+    """
+    results = []
+    for m in manufacturers:
+        _, sims = rank_classes_for_policy(m["policy"], "all")
+        if sims is None:
+            continue
+        result = sparql_validate_manufacturer(m["iri"], sims)
+        result["name"] = m["name"]
+        results.append(result)
+
+    # Compute overall agreement rate across all manufacturers
+    total_pairs = sum(r["total_pairs"] for r in results)
+    total_agreed = sum(r["agreed"] for r in results)
+    overall_rate = round(
+        100.0 * total_agreed / total_pairs, 2
+    ) if total_pairs > 0 else 0.0
+
+    return jsonify({
+        "overall_agreement_rate": overall_rate,
+        "total_pairs_evaluated": total_pairs,
+        "total_agreed": total_agreed,
+        "manufacturers": results
+    }), 200
 
 # ------------------------------------------------------------------aliases--------------------------------------------------------------------------
 def expand_question_with_aliases(question: str) -> str:
@@ -663,7 +936,7 @@ def expand_question_with_aliases(question: str) -> str:
         "data collection": "data collection gathering information privacy personal",
         "data": "data information privacy collection personal user",
         "privacy": "privacy data information personal protection collection",
-        "personal": "personal data privacy information user",
+        "personal protection": "personal data privacy information user",
         "collection": "collection data information gathering privacy",
         "protection": "protection security safeguard privacy data secure",
         
@@ -695,9 +968,239 @@ def expand_question_with_aliases(question: str) -> str:
     
     return expanded
 
+def detect_question_intent(question: str) -> str:
+    """Detects what kind of question the user is asking."""
+    q = question.lower()
+
+    if any(w in q for w in [
+        "compare", "versus", "vs", "better", "worse", "difference"
+    ]):
+        return "compare"
+
+    if any(w in q for w in [
+        "missing", "gap", "fail", "lack", "not cover",
+        "improve", "fix", "add to"
+    ]):
+        return "missing"
+
+    if any(w in q for w in [
+        "score", "percent", "coverage", "how much",
+        "overall", "compliant", "compliance"
+    ]):
+        return "score"
+
+    if any(w in q for w in [
+        "what is", "explain", "what does", "require",
+        "mean", "define", "describe"
+    ]):
+        return "explain"
+
+    if any(w in q for w in [
+        "which law", "what law", "under what", "which regulation"
+    ]):
+        return "law_lookup"
+
+    if any(w in q for w in [
+        "how many", "list", "all manufacturers", "which companies"
+    ]):
+        return "general_kg"
+
+    return "class_search"  # default — falls through to BERT
+
+
+def route_chat_by_intent(
+    intent: str,
+    question: str,
+    manufacturer: dict,
+    sims
+) -> str:
+    """
+    Returns a dynamic answer string based on detected intent.
+    Returns None if intent is class_search — lets existing
+    BERT matching in /chat handle it instead.
+    """
+    name = manufacturer["name"]
+
+    if intent == "score":
+        law_coverage, _, overall = compute_law_coverage(
+            sims, "all"
+        )
+        breakdown = ", ".join([
+            f"{lc['label']}: {lc['coverage_percent']}%"
+            for lc in law_coverage
+        ])
+        return (
+            f"{name} has an overall compliance score of "
+            f"{overall}%. Breakdown by law: {breakdown}."
+        )
+
+    elif intent == "missing":
+        missing = compute_missing_classes(sims, "all")
+        if not missing:
+            return (
+                f"{name} has no missing compliance classes "
+                f"above the current threshold."
+            )
+        items = "\n".join([
+            f"• {m['class_label']} ({m['law_label']})"
+            for m in missing[:5]
+        ])
+        return (
+            f"{name} is missing {len(missing)} requirements. "
+            f"Top gaps:\n{items}"
+        )
+
+    elif intent == "general_kg":
+        return (
+            f"The knowledge graph contains "
+            f"{len(manufacturers)} manufacturers, "
+            f"{len(class_iris)} regulatory classes, "
+            f"and {len(LAWS)} laws: "
+            f"{', '.join(law['label'] for law in LAWS)}."
+        )
+
+    elif intent == "law_lookup":
+        for law in LAWS:
+            if law["label"].lower() in question.lower():
+                idxs = law_to_class_idxs.get(law["id"], [])
+                classes = [class_labels[i] for i in idxs[:5]]
+                return (
+                    f"{law['label']} covers "
+                    f"{len(idxs)} regulatory classes "
+                    f"including: {', '.join(classes)}."
+                )
+        return (
+            "Please specify which law you are asking about. "
+            f"Available laws: "
+            f"{', '.join(law['label'] for law in LAWS)}."
+        )
+
+    return None  # class_search let BERT handle it
+
+# -------------------- Ollama KG Context --------------------
+def build_kg_context(question: str, manufacturer: dict, sims) -> str:
+    """
+    Assembles knowledge graph context for LLaMA3.
+    Includes BERT scores, SWRL facts, law coverage, gaps.
+    """
+    name = manufacturer["name"]
+    iri = manufacturer["iri"]
+
+    # Law coverage
+    law_coverage, _, overall = compute_law_coverage(sims, "all")
+    coverage_lines = "\n".join([
+        f"  {lc['label']}: {lc['coverage_percent']}% "
+        f"({lc['num_above_threshold']}/{lc['num_classes']} classes)"
+        for lc in law_coverage
+    ])
+
+    # Missing classes (top 10)
+    missing = compute_missing_classes(sims, "all")
+    missing_lines = "\n".join([
+        f"  - {m['class_label']} ({m['law_label']})"
+        for m in missing[:10]
+    ]) or "  None"
+
+    # SWRL confirmed classes
+    swrl_covered = get_swrl_covered_classes(iri)
+    swrl_labels = []
+    for idx, c_iri in enumerate(class_iris):
+        if c_iri in swrl_covered:
+            swrl_labels.append(class_labels[idx])
+    swrl_lines = ", ".join(swrl_labels[:10]) or "None confirmed"
+
+    # Top BERT covered classes
+    top_idxs = [i for i, s in enumerate(sims) if float(s) >= COVERAGE_THRESHOLD]
+    top_idxs = sorted(top_idxs, key=lambda i: sims[i], reverse=True)[:10]
+    bert_lines = ", ".join([class_labels[i] for i in top_idxs]) or "None"
+
+    # Policy excerpt
+    policy_excerpt = manufacturer["policy"][:600] if manufacturer["policy"] else "Not available"
+
+    context = f"""
+MANUFACTURER: {name}
+OVERALL COMPLIANCE SCORE: {overall}%
+
+LAW COVERAGE BREAKDOWN:
+{coverage_lines}
+
+BERT CONFIRMED COMPLIANT CLASSES:
+{bert_lines}
+
+SWRL RULE-CONFIRMED CLASSES:
+{swrl_lines}
+
+NON-COMPLIANT CLASSES (gaps):
+{missing_lines}
+
+POLICY EXCERPT:
+{policy_excerpt}
+
+AVAILABLE LAWS: {', '.join(law['label'] for law in LAWS)}
+COVERAGE THRESHOLD: {COVERAGE_THRESHOLD}
+"""
+    return context.strip()
+
+
+groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+
+def ask_llm(question: str, kg_context: str) -> str:
+    """
+    Send question + KG context to LLaMA3 via Groq cloud API.
+    Always on — no local Ollama needed.
+    """
+    try:
+        response = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {
+                    "role": "system",
+                    "content": """You are a friendly IoT privacy compliance assistant helping 
+non-technical users understand how well a company protects customer data.
+
+When answering questions:
+- Never use technical terms like 'class', 'ontology', 'IRI', 'triple', or 'node'
+- Instead of 'class' say 'requirement' or 'area'
+- Instead of 'Cybersecurity Capability' say 'cybersecurity protections'
+- Instead of 'Patch Availability' say 'keeping software up to date'
+- Instead of 'IoT Platform' say 'connected device platform security'
+- Instead of 'Configuration Management' say 'device settings security'
+- Instead of 'networkInterface' say 'network security'
+- Instead of 'PatchAvailability' say 'software update practices'
+- Explain what each missing requirement actually means in plain English
+- Reference laws by their common name: 'California privacy law', 
+  'Oregon security law', 'federal IoT security law', or 'NIST guidelines'
+- Keep answers conversational and easy to understand
+- Answer ONLY using the knowledge graph context provided
+- Do not make up information not present in the context
+- Keep all answers to 3 sentences maximum
+- No analogies or metaphors — just state the facts directly"""
+                },
+                {
+                    "role": "user",
+                    "content": f"""KNOWLEDGE GRAPH CONTEXT:
+{kg_context}
+
+QUESTION: {question}
+
+Please answer in plain English as if explaining to someone with no technical background.
+ANSWER:"""
+                }
+            ],
+            temperature=0.3,
+            max_tokens=512,
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"Chat service error: {str(e)}"
+
+
 @app.post("/chat")
 def chat():
-    """Handle chatbot questions about manufacturer compliance with improved matching."""
+    """
+    Ad-hoc compliance chatbot powered by LLaMA3 via Ollama.
+    Uses BERT scores + SWRL facts + SPARQL validation as context.
+    """
     data = request.get_json(force=True) or {}
     question = (data.get("question") or "").strip()
     iri = (data.get("iri") or "").strip()
@@ -705,100 +1208,85 @@ def chat():
     if not question or not iri:
         return jsonify({"answer": "Please select a manufacturer and ask a question."}), 400
 
-    # Find manufacturer
     match = next((m for m in manufacturers if m["iri"] == iri), None)
     if not match:
         return jsonify({"answer": "Manufacturer not found."}), 404
 
-    policy = match["policy"]
-    name = match["name"]
+    # Get BERT sims for this manufacturer
+    _, sims = rank_classes_for_policy(match["policy"], "all")
+    if sims is None:
+        return jsonify({"answer": "Could not analyze this manufacturer's policy."}), 500
 
-    # Expand the question with aliases
-    expanded_question = expand_question_with_aliases(question)
-    
-    # Use the same similarity method as the main classifier
-    if SIMILARITY_METHOD == "bert":
-        # Encode the user's question
-        question_emb = model.encode(
-            [expanded_question],
-            convert_to_numpy=True,
-            normalize_embeddings=True
-        )[0]
-        
-        # Create embeddings for class labels only (more focused matching)
-        label_embeddings = model.encode(
-            class_labels,
-            convert_to_numpy=True,
-            normalize_embeddings=True
-        )
-        
-        # Compute similarity against class labels
-        label_sims = np.dot(label_embeddings, question_emb)
-        
-        # Find the best matching class
-        best_idx = int(np.argmax(label_sims))
-        best_score_question = float(label_sims[best_idx])
-        
-    elif SIMILARITY_METHOD == "tfidf":
-        # Use TF-IDF for matching
-        question_vec = vectorizer.transform([expanded_question])
-        class_sims = cosine_similarity(question_vec, class_matrix)[0]
-        best_idx = int(np.argmax(class_sims))
-        best_score_question = float(class_sims[best_idx])
-    
-    # Now check if the manufacturer's policy covers this class
-    _, policy_sims = rank_classes_for_policy(policy, state="all")
-    
-    if policy_sims is None:
-        return jsonify({"answer": "Could not analyze the policy."}), 500
-    
-    policy_score = float(policy_sims[best_idx])
-    label = class_labels[best_idx]
-    c_iri = class_iris[best_idx]
-    covered = policy_score >= COVERAGE_THRESHOLD
-    
-    # Lower threshold since we're using focused label matching
-    if best_score_question < 0.2:
-        # Show top 3 possible matches to help the user
-        top_3_indices = np.argsort(label_sims)[-3:][::-1] if SIMILARITY_METHOD == "bert" else np.argsort(class_sims)[-3:][::-1]
-        suggestions = [class_labels[i] for i in top_3_indices]
-        
-        return jsonify({
-            "answer": f"I'm not quite sure what you're asking about. Did you mean one of these?<br><br>" +
-                     "<br>".join([f"• {s}" for s in suggestions]),
-            "show_card": False
-        }), 200
-
-    # Get class description and laws
-    class_desc = class_descs.get(c_iri, "No description available.")
-    class_laws = class_to_laws.get(c_iri, set())
-    
-    # Find which laws this class belongs to
-    law_labels = []
-    for law in LAWS:
-        if law["id"] in class_laws:
-            law_labels.append(law["label"])
-    
-    # Generate response with card data
-    if covered:
-        answer = f"Yes, <strong>{name}</strong> appears to cover <strong>{label}</strong>."
-        status = "compliant"
-    else:
-        answer = f"No, <strong>{name}</strong> does not adequately cover <strong>{label}</strong>."
-        status = "non-compliant"
+    # Build KG context and send to LLaMA3
+    kg_context = build_kg_context(question, match, sims)
+    answer = ask_llm(question, kg_context)
 
     return jsonify({
         "answer": answer,
-        "show_card": True,
-        "card": {
-            "label": label,
-            "description": class_desc,
-            "score": policy_score,
-            "status": status,
-            "laws": law_labels,
-            "threshold": COVERAGE_THRESHOLD
-        }
+        "show_card": False
     }), 200
+
+@app.get("/compare")
+def compare():
+    """
+    Compare two manufacturers side by side.
+    GET /compare?iri1=<iri>&iri2=<iri>&state=all
+    """
+    iri1 = request.args.get("iri1")
+    iri2 = request.args.get("iri2")
+    state = request.args.get("state", "all")
+
+    m1 = next((m for m in manufacturers if m["iri"] == iri1), None)
+    m2 = next((m for m in manufacturers if m["iri"] == iri2), None)
+
+    if not m1 or not m2:
+        return jsonify({"error": "One or both manufacturers not found"}), 404
+
+    _, sims1 = rank_classes_for_policy(m1["policy"], state)
+    _, sims2 = rank_classes_for_policy(m2["policy"], state)
+
+    coverage1, _, overall1 = compute_law_coverage(sims1, state)
+    coverage2, _, overall2 = compute_law_coverage(sims2, state)
+
+    missing1 = compute_missing_classes(sims1, state)
+    missing2 = compute_missing_classes(sims2, state)
+
+    # Find classes one covers but the other doesn't
+    covered1_iris = {
+        class_iris[i] for i in range(len(class_iris))
+        if sims1 is not None and float(sims1[i]) >= COVERAGE_THRESHOLD
+    }
+    covered2_iris = {
+        class_iris[i] for i in range(len(class_iris))
+        if sims2 is not None and float(sims2[i]) >= COVERAGE_THRESHOLD
+    }
+
+    m1_advantage = [
+        class_labels[class_iris.index(iri)]
+        for iri in covered1_iris - covered2_iris
+    ]
+    m2_advantage = [
+        class_labels[class_iris.index(iri)]
+        for iri in covered2_iris - covered1_iris
+    ]
+
+    return jsonify({
+        "manufacturer1": {
+            "name": m1["name"],
+            "overall": overall1,
+            "law_coverage": coverage1,
+            "missing_count": len(missing1),
+            "advantages_over_other": m1_advantage[:5]
+        },
+        "manufacturer2": {
+            "name": m2["name"],
+            "overall": overall2,
+            "law_coverage": coverage2,
+            "missing_count": len(missing2),
+            "advantages_over_other": m2_advantage[:5]
+        }
+    })
+
 
 if __name__ == "__main__":
     import os
