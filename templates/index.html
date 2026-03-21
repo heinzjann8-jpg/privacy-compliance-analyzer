@@ -99,7 +99,7 @@
         <hr style="margin-top: 20px;margin-bottom: 20px;">
 <!-- ---------------------------------------------------------------- PRIVACY BOT --------------------------------------------------------- -->
 
-          <h1 style="text-align: center;">Privacy Bot Assistant (WIP)</h1>
+          <h1 style="text-align: center;">Privacy Bot Assistant</h1>
           <p style="text-align: center; margin-top: 8px; margin-bottom: 8px; font-weight: normal;">Ask me if your selected manufacturer covers a certain compliance!</p>
           <div id="chatBox" style="background: #f5f5f5; border-radius: 8px; padding: 12px; min-height: 80px; margin-bottom: 12px; max-height: 300px; overflow-y: auto;">
               <p class="muted small" id="chatPlaceholder">Your conversation will appear here...</p>
@@ -398,6 +398,47 @@
         el('coverageLabel').textContent = coverageLabel;
         el('overallPercent').textContent = overallPct.toFixed(1);
 
+        // Auto-display SPARQL validation results
+const sv = data.sparql_validation;
+let validationEl = document.getElementById('sparqlValidation');
+if (!validationEl) {
+    validationEl = document.createElement('div');
+    validationEl.id = 'sparqlValidation';
+    validationEl.style.cssText = `
+        margin-top: 12px;
+        padding: 10px 14px;
+        background: var(--bg2, #f5f5f5);
+        border-radius: 8px;
+        border: 1px solid var(--border, #ddd);
+        font-size: 13px;
+    `;
+    el('overallCoverage').appendChild(validationEl);
+}
+
+if (sv && !sv.error) {
+    const agreeBadge = sv.agreement_rate >= 80
+        ? `<span style="color:green;font-weight:500">${sv.agreement_rate}%</span>`
+        : sv.agreement_rate >= 60
+        ? `<span style="color:orange;font-weight:500">${sv.agreement_rate}%</span>`
+        : `<span style="color:red;font-weight:500">${sv.agreement_rate}%</span>`;
+
+    validationEl.innerHTML = `
+        <strong>Validation Metrics</strong>
+        <span class="muted small" style="margin-left:8px;">
+            Agreement: ${agreeBadge}
+            &nbsp;(${sv.agreed}/${sv.total_pairs} classes)
+        </span>
+        <div class="small muted" style="margin-top:6px;">
+            Both covered: <strong>${sv.both_covered}</strong>
+            &nbsp;|&nbsp; Both not covered: <strong>${sv.both_not_covered}</strong>
+            &nbsp;|&nbsp; BERT only: <strong>${sv.bert_only}</strong>
+            &nbsp;|&nbsp; SPARQL only: <strong>${sv.sparql_only}</strong>
+        </div>
+    `;
+} else {
+    validationEl.innerHTML = `<span class="muted small">Validation unavailable</span>`;
+}
+
         // Law coverage
         const lawsDiv = el('laws');
         lawsDiv.innerHTML = '';
@@ -454,7 +495,20 @@
             }
             
             card.innerHTML = `
-              <div class="card-title">${cls.class_label}</div>
+  <div class="card-title">
+    ${cls.class_label}
+    ${cls.hybrid ? `
+      <span style="
+        font-size:11px;
+        padding:2px 7px;
+        border-radius:10px;
+        margin-left:8px;
+        font-weight:500;
+        background:${cls.hybrid.tier === 1 ? '#d4edda' : cls.hybrid.tier === 2 ? '#fff3cd' : '#cce5ff'};
+        color:${cls.hybrid.tier === 1 ? '#155724' : cls.hybrid.tier === 2 ? '#856404' : '#004085'};
+      ">${cls.hybrid.label}</span>
+    ` : ''}
+  </div>
               <div class="small muted class-desc-short">
                 ${shortHtml}
               </div>
@@ -648,25 +702,21 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ name, policy })
           });
-
           const data = await res.json();
 
           if (!res.ok) {
-            statusEl.textContent = data.error || "Error saving manufacturer.";
+            statusEl.textContent = data.error || "Error adding manufacturer.";
             return;
           }
 
-          statusEl.textContent = "Manufacturer added successfully.";
-
+          statusEl.textContent = `${data.name} added successfully.`;
           nameInput.value = "";
           policyInput.value = "";
-
           await loadDropdown();
-          el('manufacturerSelect').value = data.iri;
-          await loadDetail();
+
         } catch (err) {
           console.error(err);
-          statusEl.textContent = "Network error while saving manufacturer.";
+          statusEl.textContent = "Network/server error adding manufacturer.";
         }
       }
 
@@ -836,44 +886,6 @@
     
     botMsgContainer.appendChild(botMsg);
     chatBox.appendChild(botMsgContainer);
-
-    // Show class card if available (RIGHT side)
-    if (data.show_card === true && data.card) {
-      console.log("Creating card with data:", data.card);
-      
-      const cardContainer = document.createElement('div');
-      cardContainer.style.display = 'flex';
-      cardContainer.style.justifyContent = 'flex-end';
-      cardContainer.style.marginBottom = '12px';
-      
-      const card = document.createElement('div');
-      card.style.background = 'white';
-      card.style.border = '1px solid #ddd';
-      card.style.borderRadius = '12px';
-      card.style.padding = '12px';
-      card.style.maxWidth = '70%';
-      
-      card.innerHTML = `
-        <div style="margin-bottom: 8px;">
-          <strong style="font-size: 16px;">${data.card.label}</strong>
-        </div>
-        <p style="margin: 8px 0; color: #666; font-size: 14px;">${truncateText(data.card.description, 200)}</p>
-        ${data.card.laws && data.card.laws.length > 0 ? `
-          <div style="margin-top: 8px;">
-            <strong style="font-size: 13px;">Related Laws:</strong>
-            <div style="margin-top: 4px;">
-              ${data.card.laws.map(law => `<span style="display: inline-block; background: #e9ecef; padding: 3px 8px; border-radius: 4px; font-size: 12px; font-style: normal; margin-right: 4px; margin-top: 4px;">${law}</span>`).join('')}
-            </div>
-          </div>
-        ` : ''}
-      `;
-      
-      cardContainer.appendChild(card);
-      chatBox.appendChild(cardContainer);
-      console.log("Card added to DOM");
-    } else {
-      console.log("Not showing card. show_card:", data.show_card, "card exists:", !!data.card);
-    }
 
     chatBox.scrollTop = chatBox.scrollHeight;
     statusEl.textContent = "";
