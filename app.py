@@ -25,10 +25,12 @@ app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
+#only pdf
 def allowed_file(filename: str) -> bool:
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
-# -------------------- Config --------------------
+#--#--#
+# -------------------- SETUP and Config reads json and picks things to load --------------------
 CFG = json.load(open("config.json", "r", encoding="utf-8"))
 
 ONTO_PATH = Path(CFG["ontology_path"]).resolve()
@@ -90,6 +92,8 @@ SWRL_COVERS = URIRef("http://example.org/onto.owl#swrl_covers")
 INFERRED_PATH = ONTO_PATH.parent / "inferred_merged.rdf"
 SWRL_ACTIVE = False
 
+#--#--#
+# --------------------------SWRL Reasoner, parto f validation------------------#
 def run_swrl_reasoner() -> bool:
     """
     Manual SWRL-equivalent reasoning using rdflib.
@@ -157,7 +161,8 @@ def run_swrl_reasoner() -> bool:
         print(f"[swrl] Reasoner failed: {e}")
         return False
 
-# -------------------- Load graph (with SWRL) --------------------
+#--#--#
+# -------------------- Load rdf graph with SWRL --------------------
 def is_valid_rdf(path: Path) -> bool:
     """Check if an RDF file exists and is non-empty and parseable."""
     try:
@@ -279,7 +284,8 @@ def filter_description_by_laws(description: str, allowed_law_ids: set) -> str:
     
         return ' '.join(filtered_parts) if filtered_parts else description
 
-# -------------------- Build class corpus --------------------
+#--#--#
+# -------------------- Build class corpus; builds four parallel lists from owl --------------------
 class_iris = []
 class_labels = []
 class_texts = []
@@ -403,6 +409,7 @@ for inst in g.subjects(RDF.type, MANUFACTURER_CLS):
 manufacturers.sort(key=lambda m: m["name"].lower())
 print(f"[init] Loaded {len(manufacturers)} manufacturers")
 
+#--#--#
 # -------------------- Prepare similarity model --------------------
 if SIMILARITY_METHOD == "tfidf":
     print("[init] Using TF-IDF similarity")
@@ -427,7 +434,8 @@ elif SIMILARITY_METHOD == "bert":
 else:
     raise ValueError(f"Unknown similarity_method: {SIMILARITY_METHOD}")
 
-# -------------------- Ranking --------------------
+#--#--#
+# -------------------- Ranking ---------------------------------------- Ranking --------------------
 def rank_classes_for_policy(policy_text: str, state="all"):
     """Rank classes by similarity to policy text."""
     if not policy_text or not policy_text.strip():
@@ -647,6 +655,8 @@ def compute_missing_classes(sims, state="all"):
                 })
     return missing
 
+
+#--#--#
 # -------------------- SPARQL Validation --------------------
 def sparql_validate_manufacturer(manufacturer_iri: str, sims) -> dict:
     """
@@ -750,7 +760,8 @@ def sparql_validate_manufacturer(manufacturer_iri: str, sims) -> dict:
         "sparql_only": sparql_only
     }
 
-# -------------------- Routes --------------------
+#--#--#
+# -------------------- Routes for chat --------------------
 @app.get("/")
 def index():
     return render_template("index.html")
@@ -878,6 +889,106 @@ def extract_pdf():
         return jsonify({"error": "No text could be extracted from that PDF (it may be scanned images)."}), 200
 
     return jsonify({"text": extracted}), 200
+
+     # --- NEW: Agentic analysis step ---
+    analysis = analyze_policy_document(extracted)
+
+    return jsonify({
+        "text": extracted,
+        "analysis": analysis   # structured result alongside raw text
+    }), 200
+
+
+def analyze_policy_document(text: str) -> dict:
+    """
+    Agent step 1: classify and segment an extracted policy document.
+    Makes two sequential Groq calls — classify first, then segment.
+    """
+
+    # --- Call 1: Classify the document type ---
+    classify_prompt = f"""You are a document classifier for IoT privacy compliance.
+
+Given the following document text, determine:
+1. document_type: one of "privacy_policy", "terms_of_service", "security_policy", "legislation", "product_specification", "unknown"
+2. manufacturer_name: the company name if identifiable, or null
+3. confidence: "high", "medium", or "low"
+
+Respond ONLY with valid JSON. No explanation, no markdown.
+
+Document (first 1500 chars):
+{text[:1500]}
+
+JSON:"""
+
+    try:
+        classify_resp = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": classify_prompt}],
+            temperature=0.1,
+            max_tokens=200,
+        )
+        raw = classify_resp.choices[0].message.content.strip()
+        # Strip markdown fences if present
+        raw = raw.replace("```json", "").replace("```", "").strip()
+        classification = json.loads(raw)
+    except Exception as e:
+        classification = {
+            "document_type": "unknown",
+            "manufacturer_name": None,
+            "confidence": "low",
+            "error": str(e)
+        }
+
+    # --- Call 2: Segment into KG-aligned chunks ---
+    # Only attempt segmentation if it looks like a policy document
+    policy_types = {"privacy_policy", "terms_of_service", "security_policy"}
+    if classification.get("document_type") not in policy_types:
+        return {
+            "classification": classification,
+            "segments": [],
+            "note": "Document does not appear to be a policy — skipping segmentation."
+        }
+
+    # Build the list of your KG class labels for the prompt
+    kg_categories = ", ".join(class_labels[:30])  # use your existing class_labels list
+
+    segment_prompt = f"""You are an IoT privacy compliance analyst.
+
+Extract policy segments from the document below and map each to one of these compliance categories:
+{kg_categories}
+
+Return a JSON array. Each item must have:
+- "category": exact category name from the list above
+- "excerpt": a short quote (under 40 words) from the document supporting this category
+- "confidence": "high", "medium", or "low"
+
+Only include categories that are clearly evidenced in the text.
+Respond ONLY with a valid JSON array. No explanation, no markdown.
+
+Document (first 3000 chars):
+{text[:3000]}
+
+JSON array:"""
+
+    try:
+        segment_resp = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": segment_prompt}],
+            temperature=0.1,
+            max_tokens=1000,
+        )
+        raw2 = segment_resp.choices[0].message.content.strip()
+        raw2 = raw2.replace("```json", "").replace("```", "").strip()
+        segments = json.loads(raw2)
+        if not isinstance(segments, list):
+            segments = []
+    except Exception as e:
+        segments = []
+
+    return {
+        "classification": classification,
+        "segments": segments
+    }
 
 @app.get("/sparql_validate_all")
 def sparql_validate_all():
@@ -1077,78 +1188,84 @@ def route_chat_by_intent(
 
     return None  # class_search let BERT handle it
 
-# -------------------- Ollama KG Context --------------------
+#--#--#--!
 def build_kg_context(question: str, manufacturer: dict, sims) -> str:
-    """
-    Assembles knowledge graph context for LLaMA3.
-    Includes BERT scores, SWRL facts, law coverage, gaps.
-    """
-    name = manufacturer["name"]
-    iri = manufacturer["iri"]
 
-    # Law coverage
+    rdf_graph = Graph()
+    rdf_graph.parse(
+        "checkertest\\data\\knowledge_graph_n8259a\\inferred_merged.rdf",
+        format="xml"
+    )
+
+    inst = URIRef(manufacturer["iri"])
+    name = manufacturer["name"]
+
+    subgraph = Graph()
+
+    subgraph.bind("owl",  OWL)
+    subgraph.bind("rdfs", RDFS)
+    subgraph.bind("rdf",  RDF)
+    subgraph.bind("ex",   URIRef("http://example.org/onto.owl#"))
+
+    # manuf triples
+    for pred, obj in rdf_graph.predicate_objects(inst):
+        subgraph.add((inst, pred, obj))
+
+    # law annot triples
+    SWRL_COVERS_PRED = URIRef("http://example.org/onto.owl#swrl_covers")
+    for c in rdf_graph.subjects(RDF.type, OWL.Class):
+        # Class type declaration
+        subgraph.add((c, RDF.type, OWL.Class))
+        # Labels
+        for obj in rdf_graph.objects(c, RDFS.label):
+            subgraph.add((c, RDFS.label, obj))
+        # Law annotation predicates
+        for pred in LAW_PREDICATES:
+            for obj in rdf_graph.objects(c, pred):
+                subgraph.add((c, pred, obj))
+        # SWRL coverage triples where this manufacturer covers this class
+        if (inst, SWRL_COVERS_PRED, c) in rdf_graph:
+            subgraph.add((inst, SWRL_COVERS_PRED, c))
+
+    # serialization in turtle rdf format
+    raw_rdf_turtle = subgraph.serialize(format="turtle")
+
+    # etc metrics
     law_coverage, _, overall = compute_law_coverage(sims, "all")
     coverage_lines = "\n".join([
         f"  {lc['label']}: {lc['coverage_percent']}% "
         f"({lc['num_above_threshold']}/{lc['num_classes']} classes)"
         for lc in law_coverage
     ])
-
-    # Missing classes (top 10)
     missing = compute_missing_classes(sims, "all")
     missing_lines = "\n".join([
         f"  - {m['class_label']} ({m['law_label']})"
         for m in missing[:10]
     ]) or "  None"
 
-    # SWRL confirmed classes
-    swrl_covered = get_swrl_covered_classes(iri)
-    swrl_labels = []
-    for idx, c_iri in enumerate(class_iris):
-        if c_iri in swrl_covered:
-            swrl_labels.append(class_labels[idx])
-    swrl_lines = ", ".join(swrl_labels[:10]) or "None confirmed"
-
-    # Top BERT covered classes
-    top_idxs = [i for i, s in enumerate(sims) if float(s) >= COVERAGE_THRESHOLD]
-    top_idxs = sorted(top_idxs, key=lambda i: sims[i], reverse=True)[:10]
-    bert_lines = ", ".join([class_labels[i] for i in top_idxs]) or "None"
-
-    # Policy excerpt
-    policy_excerpt = manufacturer["policy"][:600] if manufacturer["policy"] else "Not available"
-
     context = f"""
+FILE READ: checkertest\\data\\knowledge_graph_n8259a\\inferred_merged.rdf
+TOTAL TRIPLES IN FILE: {len(rdf_graph)}
 MANUFACTURER: {name}
+MANUFACTURER IRI: {inst}
 OVERALL COMPLIANCE SCORE: {overall}%
 
 LAW COVERAGE BREAKDOWN:
 {coverage_lines}
 
-BERT CONFIRMED COMPLIANT CLASSES:
-{bert_lines}
-
-SWRL RULE-CONFIRMED CLASSES:
-{swrl_lines}
-
-NON-COMPLIANT CLASSES (gaps):
+NON-COMPLIANT AREAS / GAPS:
 {missing_lines}
 
-POLICY EXCERPT:
-{policy_excerpt}
-
-AVAILABLE LAWS: {', '.join(law['label'] for law in LAWS)}
-COVERAGE THRESHOLD: {COVERAGE_THRESHOLD}
+RAW RDF TRIPLES FROM inferred_merged.rdf (Turtle format):
+{raw_rdf_turtle}
 """
     return context.strip()
 
 
 groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
+#--#--# reads raw triples
 def ask_llm(question: str, kg_context: str) -> str:
-    """
-    Send question + KG context to LLaMA3 via Groq cloud API.
-    Always on — no local Ollama needed.
-    """
     try:
         response = groq_client.chat.completions.create(
             model="llama-3.3-70b-versatile",
@@ -1157,6 +1274,12 @@ def ask_llm(question: str, kg_context: str) -> str:
                     "role": "system",
                     "content": """You are a friendly IoT privacy compliance assistant helping 
 non-technical users understand how well a company protects customer data.
+
+YOUR ONLY DATA SOURCE: The RDF triples provided below were read directly from:
+checkertest\\data\\knowledge_graph_n8259a\\inferred_merged.rdf
+You must answer exclusively from these triples. Do not use any outside knowledge,
+training data assumptions, or information not present in the RDF context provided.
+If the answer cannot be found in the provided RDF triples, say so explicitly.
 
 When answering questions:
 - Never use technical terms like 'class', 'ontology', 'IRI', 'triple', or 'node'
@@ -1168,22 +1291,22 @@ When answering questions:
 - Instead of 'networkInterface' say 'network security'
 - Instead of 'PatchAvailability' say 'software update practices'
 - Explain what each missing requirement actually means in plain English
-- Reference laws by their common name: 'California privacy law', 
+- Reference laws by their common name: 'California privacy law',
   'Oregon security law', 'federal IoT security law', or 'NIST guidelines'
 - Keep answers conversational and easy to understand
-- Answer ONLY using the knowledge graph context provided
-- Do not make up information not present in the context
+- Answer ONLY from the RDF triples read from checkertest\\data\\knowledge_graph_n8259a\\inferred_merged.rdf
+- Do not make up information not present in those triples
 - Keep all answers to 3 sentences maximum
-- No analogies or metaphors — just state the facts directly"""
+- No analogies or metaphors. just state the facts directly"""
                 },
                 {
                     "role": "user",
-                    "content": f"""KNOWLEDGE GRAPH CONTEXT:
+                    "content": f"""RDF KNOWLEDGE GRAPH CONTEXT (read directly from checkertest\\data\\knowledge_graph_n8259a\\inferred_merged.rdf):
 {kg_context}
 
 QUESTION: {question}
 
-Please answer in plain English as if explaining to someone with no technical background.
+Answer using only the RDF triples above. Plain English, no technical background assumed.
 ANSWER:"""
                 }
             ],
@@ -1197,10 +1320,7 @@ ANSWER:"""
 
 @app.post("/chat")
 def chat():
-    """
-    Ad-hoc compliance chatbot powered by LLaMA3 via Ollama.
-    Uses BERT scores + SWRL facts + SPARQL validation as context.
-    """
+
     data = request.get_json(force=True) or {}
     question = (data.get("question") or "").strip()
     iri = (data.get("iri") or "").strip()
@@ -1223,15 +1343,12 @@ def chat():
 
     return jsonify({
         "answer": answer,
-        "show_card": False
+        "show_card": False,
+        "data_source": f"inferred_merged.rdf — SWRL active: {SWRL_ACTIVE}, {len(g)} triples loaded"
     }), 200
 
 @app.get("/compare")
 def compare():
-    """
-    Compare two manufacturers side by side.
-    GET /compare?iri1=<iri>&iri2=<iri>&state=all
-    """
     iri1 = request.args.get("iri1")
     iri2 = request.args.get("iri2")
     state = request.args.get("state", "all")
