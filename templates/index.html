@@ -407,11 +407,11 @@
         <!-- ── Live compliance charts ── -->
         <div class="charts-row" id="chartsRow" style="display:none;">
           <div class="chart-box">
-            <h4>Coverage by Law — Radar</h4>
+            <h4>Coverage by Law | Radar</h4>
             <canvas id="radarChart"></canvas>
           </div>
           <div class="chart-box">
-            <h4>Compliant vs Gap Classes — by Law</h4>
+            <h4>Compliant vs Uncompliant Means | Line Chart</h4>
             <canvas id="barChart"></canvas>
           </div>
         </div>
@@ -455,17 +455,21 @@
 
       <div class="info-panel">
         <h2>About the Laws</h2>
-        <p>These are the four regulations your privacy policies are checked against. Each law sets specific requirements for how manufacturers of connected devices must protect user data and device security.</p>
+        <p>These are the regulations your privacy policies are checked against. Each law sets specific requirements for how manufacturers of connected devices must 
+          protect user data and device security.</p>
       </div>
 
       <div class="info-panel">
         <span class="law-badge">California</span>
-        <h2 style="margin-top:8px;">California SB-327 — Information Privacy: Connected Devices</h2>
+        <h2 style="margin-top:8px;">California SB-327</h2>
         <p><strong>Effective:</strong> January 1, 2020</p>
         <p>
-          California SB-327 was the first IoT security law in the United States. It requires any manufacturer of a connected device sold in California to equip the device with reasonable security features appropriate to its nature and function. The law specifically targets devices that can connect to the internet and collect, transmit, or store user data. Manufacturers must ensure devices either ship with a unique password per device or require users to set their own password on first use — directly targeting the widespread practice of using shared default credentials that make devices easy targets for attackers.
+          California SB-327 was the first IoT security law in the United States. It requires any manufacturer of a connected device sold in California to equip the device 
+          with reasonable security features appropriate to its nature and function. The law specifically targets devices that can connect to the internet and collect,
+           transmit, or store user data. A specific requirement here is that manufacturers must ensure devices either come with a unique password per device or require users 
+           to set their own password on first use.
         </p>
-        <p>The law does not define exactly what "reasonable security" means, giving manufacturers some flexibility, but the password requirement is concrete and enforceable.</p>
+        <p>The law does not exactly define what "reasonable security" means, giving manufacturers some flexibility, but the password requirement is concrete and enforceable.</p>
         <a href="https://leginfo.legislature.ca.gov/faces/billCompareClient.xhtml?bill_id=201720180SB327" target="_blank">
           <span class="info-btn">View full legislation →</span>
         </a>
@@ -473,10 +477,13 @@
 
       <div class="info-panel">
         <span class="law-badge">Oregon</span>
-        <h2 style="margin-top:8px;">Oregon HB 2395 — Security Measures For Devices Connected to the Internet</h2>
+        <h2 style="margin-top:8px;">Oregon HB 2395</h2>
         <p><strong>Effective:</strong> January 1, 2020</p>
         <p>
-          Oregon HB 2395 mirrors California's approach and extends similar IoT security requirements to the state of Oregon. It requires manufacturers of internet-connected devices designed for personal or household use to equip them with reasonable security features. Like California SB-327, it addresses the risk of devices being compromised due to weak or shared default credentials, and it applies to devices that collect, transmit, or store personal information about users.
+          Oregon HB 2395 mirrors CA SB-327's approach and extends similar IoT security requirements to the state of Oregon. It 
+          requires manufacturers of internet-connected devices that collect, transmit, or store personal information about users to provide reasonable security standards, including
+          but not limited to providing preprogrammed passwords or opportunity for the user to create their own password during first booting.
+           Like California SB-327, it addresses the risk of devices being compromised due to weak or shared default credentials.
         </p>
         <p>The law applies specifically to devices designed and marketed for consumers rather than industrial or enterprise use.</p>
         <a href="https://olis.oregonlegislature.gov/liz/2019R1/Downloads/MeasureDocument/HB2395" target="_blank">
@@ -489,9 +496,12 @@
         <h2 style="margin-top:8px;">Public Law 116-207 — IoT Cybersecurity Improvement Act of 2020</h2>
         <p><strong>Effective:</strong> December 4, 2020</p>
         <p>
-          PL 116-207 is a federal law that establishes minimum cybersecurity standards for IoT devices owned or controlled by the U.S. federal government. Rather than applying to all manufacturers directly, it works by requiring federal agencies to only purchase IoT devices that meet NIST-defined security standards. This creates strong market pressure on manufacturers who want to sell to government buyers.
+          PL 116-207 is a federal law that establishes minimum cybersecurity standards for IoT devices owned or controlled by the U.S. federal government. Rather than applying to all 
+          manufacturers directly, it works by requiring federal agencies to only purchase IoT devices that meet NIST-defined security standards. This creates strong market pressure on
+           manufacturers who want to sell to government buyers.
         </p>
-        <p>The law requires NIST to publish guidelines for IoT device security, directs agencies to inventory their connected devices, and establishes vulnerability disclosure policies — a structured way for researchers to report security flaws without legal risk.</p>
+        <p>The law requires NIST to publish guidelines for IoT device security, directs agencies to inventory their connected devices, and establishes vulnerability disclosure policies, 
+        structuring a way for researchers to report security flaws without legal risk.</p>
         <a href="https://www.congress.gov/116/plaws/publ207/PLAW-116publ207.pdf" target="_blank">
           <span class="info-btn">View full legislation →</span>
         </a>
@@ -502,9 +512,12 @@
         <h2 style="margin-top:8px;">NISTIR 8259 — Foundational Cybersecurity Activities for IoT Device Manufacturers</h2>
         <p><strong>Published:</strong> May 2020</p>
         <p>
-          NISTIR 8259 is not a law but a set of recommended practices published by the National Institute of Standards and Technology. It describes the cybersecurity activities that IoT device manufacturers should perform before a device is sold and throughout its supported lifetime. The document is widely cited in legislation and procurement requirements as a baseline standard.
+          NISTIR 8259 is not a law but a set of standard practices published by the National Institute of Standards and Technology. It describes the cybersecurity activities that IoT
+           device manufacturers should perform before a device is sold and throughout its supported lifetime. The document is widely cited in legislation and procurement requirements as
+            a baseline standard.
         </p>
-        <p>It covers six core areas: identifying cybersecurity risks related to the device, protecting device security, detecting cybersecurity events, responding to incidents, recovering from incidents, and communicating with users about security. These map directly to the compliance classes used in this application's analysis.</p>
+        <p>It covers six core areas: identifying cybersecurity risks related to the device, protecting device security, detecting cybersecurity events, responding to incidents, 
+          recovering from incidents, and communicating with users about security. These map directly to the compliance classes used in this application's analysis.</p>
         <a href="https://csrc.nist.gov/pubs/ir/8259/final" target="_blank">
           <span class="info-btn">View full publication →</span>
         </a>
@@ -518,47 +531,62 @@
 
       <div class="info-panel">
         <h2>About This Application</h2>
-        <p>The Privacy Policy Compliance Analyzer is a research tool that automatically evaluates how well a company's published privacy policy covers the requirements of major IoT security laws and standards. It uses a combination of machine learning, knowledge graph reasoning, and a large language model to produce its analysis.</p>
+        <p>The Privacy Policy Compliance Analyzer is a compliance adherence tool that automatically evaluates how well a company's published privacy policy covers 
+          the requirements of major IoT security laws and standards. It uses a combination of machine learning, knowledge graph reasoning, and a 
+          large language model to produce its analysis.</p>
       </div>
 
       <div class="info-panel">
         <h3 style="margin-top:0;">How it works</h3>
-        <p>When you select a manufacturer, the application retrieves their privacy policy text from the knowledge graph and runs it through two analysis methods simultaneously:</p>
+        <p>When you select a manufacturer, the application retrieves their privacy policy text from the knowledge graph and runs it through two 
+          analysis methods simultaneously:</p>
 
         <div class="about-grid">
           <div class="about-card">
-            <h4>BERT Semantic Similarity</h4>
-            <p>A sentence-transformer model encodes the policy text and each regulatory compliance class into numerical vectors, then measures how semantically similar they are. This catches coverage even when the exact legal terminology isn't used.</p>
+            <h4>Sentence-Transformer Semantic Similarity</h4>
+            <p>A BERT-based sentence-transformer model encodes the policy text and each regulatory compliance class into numerical vectors, then measures 
+              how semantically similar they are. This catches coverage even when the exact legal terminology isn't used.</p>
           </div>
           <div class="about-card">
             <h4>SWRL Rule Reasoning</h4>
-            <p>A set of keyword-to-class rules fires against the policy text. If a policy mentions "authentication" or "unique password", the reasoner infers that the Authentication class is covered. This catches explicit keyword evidence.</p>
+            <p>A set of keyword-to-class rules fires against the policy text. If a policy mentions "authentication" or "unique password", the 
+              reasoner infers that the Authentication class is covered. This catches explicit keyword evidence.</p>
           </div>
           <div class="about-card">
             <h4>Hybrid Confidence Tiers</h4>
-            <p>The two methods are combined into a four-tier confidence rating. HIGH means both BERT and SWRL agree. MEDIUM-BERT means only semantic similarity confirmed it. MEDIUM-SWRL means only keywords matched. NONE means neither method found evidence.</p>
+            <p>The two methods are combined into a four-tier confidence rating. HIGH means both BERT and SWRL agree. MEDIUM-BERT means only 
+              semantic similarity confirmed it. MEDIUM-SWRL means only keywords matched. NONE means neither method found evidence.</p>
           </div>
           <div class="about-card">
             <h4>SPARQL Validation</h4>
-            <p>A cross-validation step compares BERT's decisions against keyword matching for every class, computing an agreement rate. This gives a measure of how consistent and reliable the analysis is for each manufacturer.</p>
+            <p>A cross-validation step compares BERT's decisions against keyword matching for every class, computing an agreement rate. This 
+              gives a measure of how consistent and reliable the analysis is for each manufacturer.</p>
           </div>
         </div>
       </div>
 
       <div class="info-panel">
         <h3 style="margin-top:0;">Knowledge Graph</h3>
-        <p>All manufacturer data, policy text, regulatory class definitions, and law annotations are stored in an OWL ontology — a structured knowledge graph that encodes relationships between manufacturers, laws, and compliance requirements. The graph is loaded at startup and queried in real time for every analysis. When you add a new manufacturer, they are written directly into this graph.</p>
+        <p>All manufacturer data, policy text, regulatory class definitions, and law annotations are stored in an OWL ontology. 
+          This is a structured knowledge graph that encodes relationships between manufacturers, laws, and compliance requirements. 
+          The graph is loaded at startup and queried in real time for every analysis. When you add a new manufacturer, they are
+           written directly into this graph.</p>
       </div>
 
       <div class="info-panel">
         <h3 style="margin-top:0;">Privacy Bot</h3>
-        <p>The chatbot on the Home tab is powered by LLaMA 3.3 70B running via the Groq API. Crucially, the model only has access to the knowledge graph context built for the selected manufacturer — it cannot browse the internet or access any data outside what is shown in the compliance analysis. Every answer is grounded in the graph.</p>
+        <p>The chatbot on the Home tab is powered by LLaMA 3.3 70B running via the Groq API. The model only has access to 
+          the knowledge graph context built for the selected manufacturer; it cannot browse the internet or access any data outside
+           what is shown in the compliance analysis. Every answer is grounded in the graph.</p>
       </div>
 
       <div class="info-panel">
         <h3 style="margin-top:0;">Coverage score explained</h3>
-        <p>The coverage percentage shown for each law represents what fraction of that law's required compliance classes the manufacturer's policy scores above the similarity threshold. A score of 100% means the policy contains evidence of covering every class associated with that law. A lower score indicates gaps — areas the policy does not clearly address.</p>
-        <p>The threshold is set in <code>config.json</code> as <code>coverage_threshold</code>. The default is 0.27, meaning a class needs at least a 27% similarity score to count as covered.</p>
+        <p>The coverage percentage shown for each law represents what fraction of that law's required compliance classes the manufacturer's
+           policy scores above the similarity threshold. A score of 100% means the policy contains evidence of covering every class 
+           associated with that law. A lower score indicates whats missing, areas the policy does not clearly address.</p>
+        <p>The threshold is set in <code>config.json</code> as <code>coverage_threshold</code>. The default is 0.27, meaning a class 
+          needs at least a 27% similarity score to count as covered.</p>
       </div>
 
     </div><!-- /tab-about -->
@@ -890,46 +918,6 @@
         el('coverageLabel').textContent = coverageLabel;
         el('overallPercent').textContent = overallPct.toFixed(1);
 
-        const sv = data.sparql_validation;
-        let validationEl = document.getElementById('sparqlValidation');
-        if (!validationEl) {
-            validationEl = document.createElement('div');
-            validationEl.id = 'sparqlValidation';
-            validationEl.style.cssText = `
-                margin-top: 12px;
-                padding: 10px 14px;
-                background: var(--bg2, #f5f5f5);
-                border-radius: 8px;
-                border: 1px solid var(--border, #ddd);
-                font-size: 13px;
-            `;
-            el('overallCoverage').appendChild(validationEl);
-        }
-
-        if (sv && !sv.error) {
-            const agreeBadge = sv.agreement_rate >= 80
-                ? `<span style="color:green;font-weight:500">${sv.agreement_rate}%</span>`
-                : sv.agreement_rate >= 60
-                ? `<span style="color:orange;font-weight:500">${sv.agreement_rate}%</span>`
-                : `<span style="color:red;font-weight:500">${sv.agreement_rate}%</span>`;
-
-            validationEl.innerHTML = `
-                <strong>Validation Metrics</strong>
-                <span class="muted small" style="margin-left:8px;">
-                    Agreement: ${agreeBadge}
-                    &nbsp;(${sv.agreed}/${sv.total_pairs} classes)
-                </span>
-                <div class="small muted" style="margin-top:6px;">
-                    Both covered: <strong>${sv.both_covered}</strong>
-                    &nbsp;|&nbsp; Both not covered: <strong>${sv.both_not_covered}</strong>
-                    &nbsp;|&nbsp; BERT only: <strong>${sv.bert_only}</strong>
-                    &nbsp;|&nbsp; SPARQL only: <strong>${sv.sparql_only}</strong>
-                </div>
-            `;
-        } else {
-            validationEl.innerHTML = `<span class="muted small">Validation unavailable</span>`;
-        }
-
         const lawsDiv = el('laws');
         lawsDiv.innerHTML = '';
 
@@ -948,7 +936,7 @@
               <strong>Status:</strong>&nbsp;${status}
             </div>
             <div class="chip">
-              <strong>Covered:</strong>&nbsp;${law.num_above_threshold} / ${law.num_classes} classes
+              <strong>Covered:</strong>&nbsp;${law.num_above_threshold} / ${law.num_classes} means
             </div>
           `;
           lawsDiv.appendChild(card);
@@ -958,7 +946,7 @@
         renderLiveCharts(lawCoverage);
 
         if (stateFilter !== 'all') {
-          const classesDiv = el('classes');
+          const classesDiv = el('means');
           const classHeader = el('classHeader');
           classesDiv.innerHTML = '';
 
@@ -1317,7 +1305,7 @@
         const covered = lawCoverage.map(l => l.num_above_threshold || 0);
         const gaps    = lawCoverage.map(l => (l.num_classes || 0) - (l.num_above_threshold || 0));
 
-        // ── Radar chart ──
+        // ── Radar chart ── this pulls results from the /coverage function uses renderlivecharts function
         const radarCanvas = el('radarChart');
         if (radarChartInstance) { radarChartInstance.destroy(); radarChartInstance = null; }
         radarChartInstance = new Chart(radarCanvas, {
@@ -1383,7 +1371,7 @@
             scales: {
               x: { stacked: false, ticks: { color: '#555', font: { size: 11 } }, grid: { display: false } },
               y: { beginAtZero: true, ticks: { color: '#555', stepSize: 1 }, grid: { color: '#eee' },
-                   title: { display: true, text: 'Classes', color: '#555', font: { size: 11 } } }
+                   title: { display: true, text: 'Means', color: '#555', font: { size: 11 } } }
             }
           }
         });
