@@ -39,26 +39,6 @@ body {
   transition: background-color 0.3s, color 0.3s;
 }
 
-/* Dark mode toggle button */
-#darkModeToggle {
-  position: fixed;
-  top: 20px;
-  left: 20px;
-  padding: 6px 6px;
-  background-color: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  cursor: pointer;
-  z-index: 1000;
-  font-size: 14px;
-  color: var(--text);
-  font-weight: 500;
-}
-
-#darkModeToggle:hover {
-  opacity: 0.8;
-}
-
 /* Make law coverage percentages stand out */
 .law-percent {
   font-size: 0.9rem;
@@ -67,18 +47,10 @@ body {
   margin-right: 4px;
 }
 
-body.dark-mode .law-percent {
-  color: #ff4444;
-}
-
 .law-label-text {
   font-size: 0.95rem;
   font-weight: 600;
   color: #444;
-}
-
-body.dark-mode .law-label-text {
-  color: #cccccc;
 }
 
 .container {
@@ -349,11 +321,6 @@ button:hover {
   margin: 8px 0;
 }
 
-.dark-mode #chatBox .card {
-  background: #2d2d2d;
-  border-color: #444;
-}
-
 .law-badge {
   display: inline-block;
   background: #e9ecef;
@@ -367,13 +334,4 @@ button:hover {
 .dark-mode .law-badge {
   background: #3a3a3a;
   color: #e0e0e0;
-}
-
-.dark-mode #chatBox div[style*="background: #e9ecef"] {
-  background: #3a3a3a !important;
-  color: #e0e0e0 !important;
-}
-
-.dark-mode #chatBox div[style*="background: #007bff"] {
-  background: #0056b3 !important;
 }
