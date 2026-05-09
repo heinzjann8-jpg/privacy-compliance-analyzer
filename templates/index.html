@@ -284,7 +284,7 @@
       /* ── Live compliance charts ── */
       .charts-row {
         display: grid;
-        grid-template-columns: 1fr;
+        grid-template-columns: 1fr 1fr;
         gap: 20px;
         margin: 24px 0;
       }
@@ -464,6 +464,7 @@
             <option value="all">All Regulations</option>
             <option value="california">California</option>
             <option value="oregon">Oregon</option>
+            <option value="texas">Texas</option>
             <option value="nistir">NISTIR 8259</option>
             <option value="plaw">Federal PL 116-207</option>
           </select>
@@ -477,7 +478,11 @@
         <!-- Live compliance charts — below law percentage cards -->
         <div class="charts-row" id="chartsRow" style="display:none; margin-top:20px;">
           <div class="chart-box">
-            <h4>Compliant vs Non-Compliant Rules | Bar Chart</h4>
+            <h4>Coverage by Law | Radar</h4>
+            <canvas id="radarChart"></canvas>
+          </div>
+          <div class="chart-box">
+            <h4>Compliant vs Non-Compliant Means | Bar Chart</h4>
             <canvas id="barChart"></canvas>
           </div>
         </div>
@@ -485,11 +490,11 @@
         <!-- Top & Missing classes side by side -->
         <div class="row two-col">
           <div class="col">
-            <h3 id="classHeader">Compliant Rules</h3>
+            <h3 id="classHeader">Compliant Means</h3>
             <div id="classes" class="cards"></div>
           </div>
           <div class="col">
-            <h3 id="missingHeader">Non-Compliant Rules</h3>
+            <h3 id="missingHeader">Non-Compliant Means</h3>
             <div id="missingClasses" class="cards"></div>
           </div>
         </div>
@@ -839,7 +844,7 @@
         let overallPct = 0;
         let coverageLabel = 'Overall Coverage';
         
-        overallPct = data.overall || 0;
+        overallPct = data.overall_coverage || 0;
         
         if (stateFilter === 'all') {
           coverageLabel = 'Overall Coverage';
@@ -847,13 +852,15 @@
           coverageLabel = 'California Legislature Coverage';
         } else if (stateFilter === 'oregon') {
           coverageLabel = 'Oregon Legislature Coverage';
+        } else if (stateFilter === 'texas') {
+          coverageLabel = 'Texas Legislature Coverage';
         } else if (stateFilter === 'nistir') {
           coverageLabel = 'NISTIR Standard Coverage';
         } else if (stateFilter === 'plaw') {
           coverageLabel = 'Federal Public Law 116-207 Coverage';
         }
         
-        console.log('Using overall from backend:', overallPct);
+        console.log('Using overall_coverage from backend:', overallPct);
 
         el('coverageLabel').textContent = coverageLabel;
         el('overallPercent').textContent = overallPct.toFixed(1);
@@ -863,7 +870,7 @@
 
         lawCoverage.forEach(law => {
           const pct = law.coverage_percent || 0;
-          const status = statusFromCoverage(pct, law.num_above, law.num_classes);
+          const status = statusFromCoverage(pct, law.num_above_threshold, law.num_classes);
 
           const card = document.createElement('div');
           card.className = 'card';
@@ -876,7 +883,7 @@
               <strong>Status:</strong>&nbsp;${status}
             </div>
             <div class="chip">
-              <strong>Covered:</strong>&nbsp;${law.num_above} / ${law.num_classes} Rules
+              <strong>Covered:</strong>&nbsp;${law.num_above_threshold} / ${law.num_classes} means
             </div>
           `;
           lawsDiv.appendChild(card);
@@ -890,17 +897,17 @@
           const classHeader = el('classHeader');
           classesDiv.innerHTML = '';
 
-          const topClasses = data.covered || [];
+          const topClasses = data.suggested_classes || [];
           const INITIAL_COMPLIANT_DISPLAY = 5;
 
           if (!topClasses.length) {
             classHeader.style.display = '';
-            classesDiv.innerHTML = '<p class="muted small">No compliant rules found.</p>';
+            classesDiv.innerHTML = '<p class="muted small">No compliant means found.</p>';
           } else {
             classHeader.style.display = '';
             
             topClasses.forEach((cls, index) => {
-              const desc = cls.desc || cls.annotation || "";
+              const desc = cls.class_desc || "";
               const { shortHtml, fullHtml } = buildLawSections(desc, stateFilter);
 
               const card = document.createElement('div');
@@ -962,7 +969,7 @@
             if (topClasses.length > INITIAL_COMPLIANT_DISPLAY) {
               const showMoreBtn = document.createElement('button');
               showMoreBtn.className = 'show-more-btn';
-              showMoreBtn.textContent = `Show ${topClasses.length - INITIAL_COMPLIANT_DISPLAY} more compliant rules`;
+              showMoreBtn.textContent = `Show ${topClasses.length - INITIAL_COMPLIANT_DISPLAY} more compliant means`;
               showMoreBtn.id = 'showMoreCompliant';
               
               showMoreBtn.addEventListener('click', () => {
@@ -972,7 +979,7 @@
                 if (isExpanded) {
                   const extraCards = classesDiv.querySelectorAll('.extra-compliant-card');
                   extraCards.forEach(card => card.classList.add('hidden'));
-                  showMoreBtn.textContent = `Show ${topClasses.length - INITIAL_COMPLIANT_DISPLAY} more compliant rules`;
+                  showMoreBtn.textContent = `Show ${topClasses.length - INITIAL_COMPLIANT_DISPLAY} more compliant means`;
                 } else {
                   hiddenCards.forEach(card => card.classList.remove('hidden'));
                   showMoreBtn.textContent = 'Show less';
@@ -987,11 +994,11 @@
           const missingHeader = el('missingHeader');
           missingDiv.innerHTML = '';
 
-          const rawMissing = data.missing || [];
+          const rawMissing = data.missing_classes || [];
 
           const missingByClass = new Map();
           rawMissing.forEach(mc => {
-            const key = mc.class_label;
+            const key = mc.class_iri || mc.class_label;
             if (!missingByClass.has(key)) {
               missingByClass.set(key, mc);
             }
@@ -1008,7 +1015,7 @@
             missingDiv.style.display = '';
             
             missingClasses.forEach((mc, index) => {
-              const desc = mc.desc || mc.annotation || "";
+              const desc = mc.class_desc || "";
               const { shortHtml, fullHtml } = buildLawSections(desc, stateFilter);
 
               const card = document.createElement('div');
@@ -1060,7 +1067,7 @@
             if (missingClasses.length > INITIAL_MISSING_DISPLAY) {
               const showMoreBtn = document.createElement('button');
               showMoreBtn.className = 'show-more-btn';
-              showMoreBtn.textContent = `Show ${missingClasses.length - INITIAL_MISSING_DISPLAY} more non-compliant rules`;
+              showMoreBtn.textContent = `Show ${missingClasses.length - INITIAL_MISSING_DISPLAY} more non-compliant means`;
               showMoreBtn.id = 'showMoreMissing';
               
               showMoreBtn.addEventListener('click', () => {
@@ -1070,7 +1077,7 @@
                 if (isExpanded) {
                   const extraCards = missingDiv.querySelectorAll('.extra-missing-card');
                   extraCards.forEach(card => card.classList.add('hidden'));
-                  showMoreBtn.textContent = `Show ${missingClasses.length - INITIAL_MISSING_DISPLAY} more non-compliant rules`;
+                  showMoreBtn.textContent = `Show ${missingClasses.length - INITIAL_MISSING_DISPLAY} more non-compliant means`;
                 } else {
                   hiddenCards.forEach(card => card.classList.remove('hidden'));
                   showMoreBtn.textContent = 'Show less';
@@ -1210,6 +1217,7 @@
 
       el('btnLoad').onclick = loadDetail;
 
+      let radarChartInstance = null;
       let barChartInstance   = null;
 
       function renderLiveCharts(lawCoverage) {
@@ -1221,8 +1229,41 @@
         if (row) row.style.display = '';
 
         const labels  = lawCoverage.map(l => l.label);
-        const covered = lawCoverage.map(l => l.num_above || 0);
-        const gaps    = lawCoverage.map(l => (l.num_classes || 0) - (l.num_above || 0));
+        const pcts    = lawCoverage.map(l => parseFloat(l.coverage_percent) || 0);
+        const covered = lawCoverage.map(l => l.num_above_threshold || 0);
+        const gaps    = lawCoverage.map(l => (l.num_classes || 0) - (l.num_above_threshold || 0));
+
+        // ── Radar chart ── this pulls results from the /coverage function uses renderlivecharts function
+        const radarCanvas = el('radarChart');
+        if (radarChartInstance) { radarChartInstance.destroy(); radarChartInstance = null; }
+        radarChartInstance = new Chart(radarCanvas, {
+          type: 'radar',
+          data: {
+            labels: labels,
+            datasets: [{
+              label: 'Coverage %',
+              data: pcts,
+              backgroundColor: 'rgba(78,121,167,0.2)',
+              borderColor: 'rgba(78,121,167,0.9)',
+              pointBackgroundColor: 'rgba(78,121,167,1)',
+              pointRadius: 4,
+              borderWidth: 2
+            }]
+          },
+          options: {
+            responsive: true,
+            plugins: { legend: { display: false } },
+            scales: {
+              r: {
+                min: 0, max: 100,
+                ticks: { stepSize: 25, font: { size: 10 }, color: '#666' },
+                pointLabels: { font: { size: 11 }, color: '#333' },
+                grid: { color: 'rgba(0,0,0,0.08)' },
+                angleLines: { color: 'rgba(0,0,0,0.08)' }
+              }
+            }
+          }
+        });
 
         // ── Bar chart ──
         const barCanvas = el('barChart');
@@ -1258,7 +1299,7 @@
             scales: {
               x: { stacked: false, ticks: { color: '#555', font: { size: 11 } }, grid: { display: false } },
               y: { beginAtZero: true, ticks: { color: '#555', stepSize: 1 }, grid: { color: '#eee' },
-                   title: { display: true, text: 'Rules', color: '#555', font: { size: 11 } } }
+                   title: { display: true, text: 'Means', color: '#555', font: { size: 11 } } }
             }
           }
         });
@@ -1272,26 +1313,28 @@
 
       loadDropdown();
 
-      // Dark mode toggle
+      // Dark mode toggle - only run if the button exists
       const darkModeToggle = el('darkModeToggle');
       const body = document.body;
 
-      if (localStorage.getItem('darkMode') === 'enabled') {
-        body.classList.add('dark-mode');
-        darkModeToggle.textContent = 'Light';
-      }
-
-      darkModeToggle.onclick = function() {
-        body.classList.toggle('dark-mode');
-        
-        if (body.classList.contains('dark-mode')) {
+      if (darkModeToggle) {
+        if (localStorage.getItem('darkMode') === 'enabled') {
+          body.classList.add('dark-mode');
           darkModeToggle.textContent = 'Light';
-          localStorage.setItem('darkMode', 'enabled');
-        } else {
-          darkModeToggle.textContent = 'Dark';
-          localStorage.setItem('darkMode', 'disabled');
         }
-      };
+
+        darkModeToggle.onclick = function() {
+          body.classList.toggle('dark-mode');
+          
+          if (body.classList.contains('dark-mode')) {
+            darkModeToggle.textContent = 'Light';
+            localStorage.setItem('darkMode', 'enabled');
+          } else {
+            darkModeToggle.textContent = 'Dark';
+            localStorage.setItem('darkMode', 'disabled');
+          }
+        };
+      }
 
       async function sendChat() {
   const input = el('chatInput');
