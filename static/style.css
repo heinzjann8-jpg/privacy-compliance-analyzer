@@ -1,61 +1,379 @@
-{
-  "ontology_path": "data/knowledge_graph_n8259a/inferred_merged.rdf",
-  "manufacturer_class_iri": "http://example.org/onto.owl#Manufacturer",
-  "policy_property_iri": "http://example.org/onto.owl#policy_description",
-  "top_k": 8,
-  "law_annotation_predicates": [
-    "http://www.w3.org/2000/01/rdf-schema#hasLaw"
-  ],
-  "laws": [
-    {
-      "id": "OR_HB_2395",
-      "label": "Oregon HB 2395",
-      "keywords": [
-        "HB 2395",
-        "Oregon HB 2395"
-      ]
-    },
-    {
-      "id": "CA_SB_327",
-      "label": "California SB-327",
-      "keywords": [
-        "SB-327",
-        "California",
-        "connected devices"
-      ]
-    },
-    {
-      "id": "IoT_Cyber_Act_2020",
-      "label": "IoT Cybersecurity Improvement Act of 2020",
-      "keywords": [
-        "IoT Cybersecurity Act",
-        "PL 116-207",
-        "federal IoT law",
-        "2020"
-      ]
-    },
-    {
-      "id": "NISTIR_8259",
-      "label": "NISTIR 8259",
-      "keywords": [
-        "NISTIR 8259",
-        "NIST",
-        "foundational cybersecurity",
-        "IoT device manufacturers"
-      ]
-    },
-    {
-      "id": "TX_HB_4",
-      "label": "Texas HB 4",
-      "keywords": [
-        "Texas HB 4",
-        "TX HB 4"
-      ]
-    }
-  ],
-    "coverage_threshold": 0.27,
-  "similarity_method": "bert",              
-  "coverage_threshold_bert": 0.27,
-  "coverage_threshold_tfidf": 7,
-  "embedding_model_name": "all-MiniLM-L6-v2" 
+:root {
+  --bg: linear-gradient(to bottom, #0066cc, white);
+  --panel: #ffffff;
+  --text: #444444;
+  --muted: #6b7280;
+  --accent: #0066cc;
+  --chip: #e5e7eb;
+  --border: #d1d5db;
+  --policy-bg: #f9fafb;
+  --card-bg: #f9fafb;
+  --select-bg: #ffffff;
+  --select-text: #111827;
+}
+
+/* Dark mode */
+body.dark-mode {
+  --bg: #000000;
+  --panel: #2a2a2a;
+  --text: #ffffff;
+  --muted: #cccccc;
+  --accent: #0814c1;
+  --chip: #404040;
+  --border: #444444;
+  --policy-bg: #2a2a2a;
+  --card-bg: #1a1a1a;
+  --select-bg: #000000;
+  --select-text: #ffffff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Arial;
+  transition: background-color 0.3s, color 0.3s;
+}
+
+/* Dark mode toggle button */
+#darkModeToggle {
+  position: fixed;
+  top: 20px;
+  left: 20px;
+  padding: 6px 6px;
+  background-color: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  z-index: 1000;
+  font-size: 14px;
+  color: var(--text);
+  font-weight: 500;
+}
+
+#darkModeToggle:hover {
+  opacity: 0.8;
+}
+
+/* Make law coverage percentages stand out */
+.law-percent {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #cc0000;
+  margin-right: 4px;
+}
+
+body.dark-mode .law-percent {
+  color: #ff4444;
+}
+
+.law-label-text {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #444;
+}
+
+body.dark-mode .law-label-text {
+  color: #cccccc;
+}
+
+.container {
+  max-width: 980px;
+  margin: 40px auto;
+  padding: 0 16px 48px;
+}
+
+h1 {
+  margin: 0 0 8px;
+  font-size: 28px;
+  color: var(--text);
+}
+
+h2 {
+  margin: 24px 0 8px;
+  font-size: 22px;
+  color: var(--text);
+}
+
+h3 {
+  margin: 16px 0 8px;
+  font-size: 18px;
+  color: var(--text);
+}
+
+.subtitle {
+  margin: 0 0 24px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.panel {
+  background: var(--panel);
+  border-radius: 12px;
+  padding: 16px 16px 12px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.04);
+  border: 1px solid var(--border);
+  margin-bottom: 24px;
+}
+
+.details {
+  background: var(--panel);
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.04);
+  border: 1px solid var(--border);
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.row.two-col {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  margin-top: 16px;
+}
+
+.row.two-col .col {
+  flex: 1;
+  min-width: 0;
+}
+
+label {
+  font-size: 14px;
+  color: var(--text);
+}
+
+select {
+  flex: 1;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--select-bg);
+  font-size: 14px;
+  color: var(--select-text);
+  position: relative;
+  z-index: 10;
+}
+
+select option {
+  background: var(--select-bg);
+  color: var(--select-text);
+}
+
+input[type="text"],
+textarea {
+  background: var(--select-bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+input[type="text"]::placeholder,
+textarea::placeholder {
+  color: var(--muted);
+}
+
+button {
+  border-radius: 8px;
+  border: none;
+  padding: 6px 12px;
+  font-size: 14px;
+  cursor: pointer;
+  background: var(--accent);
+  color: white;
+  font-weight: 500;
+}
+
+button:hover {
+  opacity: 0.9;
+}
+
+.small-btn {
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+#mName {
+  font-size: 42px;           /* Make it bigger */
+  text-align: center;        /* Center it */
+  margin: 0px 0;            /* Add spacing */
+  font-weight: 700;          /* Make it bolder */
+}
+
+.small-btn.hidden {
+  display: none;
+}
+
+.small-btn.linkish {
+  background: none;
+  border: none;
+  color: var(--accent);
+  padding: 0;
+  margin-top: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.small-btn.linkish:hover {
+  text-decoration: underline;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.small {
+  font-size: 12px;
+}
+
+.policy {
+  white-space: pre-wrap;
+  background: var(--policy-bg);
+  border-radius: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  max-height: 260px;
+  overflow: hidden;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.card {
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+/* Overall coverage box styling */
+#overallCoverage {
+  background: var(--card-bg) !important;
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.card-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--chip);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.chip strong {
+  margin-right: 4px;
+}
+
+.hidden {
+  display: none;
+}
+
+/* Class description layout */
+.class-desc-short,
+.class-desc-full {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.class-desc-short.hidden,
+.class-desc-full.hidden {
+  display: none;
+}
+
+.class-desc-full {
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+/* Law description pieces */
+.law-desc {
+  margin-top: 4px;
+  color: var(--muted);
+}
+
+.law-desc strong {
+  font-weight: 700;
+  color: var(--text);
+}
+
+/* "Related law" label in missing-classes cards */
+.related-law {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+/* Law coverage cards side-by-side */
+.law-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.law-cards .card {
+  flex: 1 1 260px;
+}
+
+#chatBox .card {
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 12px;
+  margin: 8px 0;
+}
+
+.dark-mode #chatBox .card {
+  background: #2d2d2d;
+  border-color: #444;
+}
+
+.law-badge {
+  display: inline-block;
+  background: #e9ecef;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  margin-right: 4px;
+  margin-top: 4px;
+}
+
+.dark-mode .law-badge {
+  background: #3a3a3a;
+  color: #e0e0e0;
+}
+
+.dark-mode #chatBox div[style*="background: #e9ecef"] {
+  background: #3a3a3a !important;
+  color: #e0e0e0 !important;
+}
+
+.dark-mode #chatBox div[style*="background: #007bff"] {
+  background: #0056b3 !important;
 }
