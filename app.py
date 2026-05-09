@@ -63,14 +63,8 @@ APPLIES_TO_STATE_PROP = URIRef("http://example.org/onto.owl#appliesToState")
 # =============================================================================
 _STATE_MAP = {
     "all": "all", "oregon": "OR", "california": "CA",
-    "texas": "TX",
-    # Keep federal sources separate so selecting/asking for NISTIR does not
-    # also pull Public Law 116-207 into the chatbot response.
-    "nistir": "NISTIR_8259",
-    "plaw": "IoT_Cyber_Act_2020",
+    "texas": "TX", "nistir": "US_FED", "plaw": "US_FED",
     "or": "OR", "ca": "CA", "tx": "TX", "us_fed": "US_FED",
-    "nist": "NISTIR_8259", "8259": "NISTIR_8259",
-    "public_law": "IoT_Cyber_Act_2020", "pl_116_207": "IoT_Cyber_Act_2020",
 }
 def norm_state(raw):
     return _STATE_MAP.get((raw or "").strip().lower(), "all")
@@ -100,8 +94,6 @@ def _class_label(c):
     raw = lbls[0] if lbls else local_name(str(c))
     return _LABEL_FIXES.get(raw.lower().strip(), raw)
 
-
-#!!!! searches for hasLaw annots
 def _law_ids_for_class(c):
     ids = set()
     for pred in LAW_PREDS:
@@ -212,13 +204,6 @@ wgrader.init_grader(
 def _active_laws(state):
     if state == "all":
         return LAWS
-
-    # Direct single-law filters used by the frontend for NISTIR and Public Law.
-    # This prevents a NISTIR-only question from being expanded to every federal law.
-    direct_law_ids = {l["id"] for l in LAWS}
-    if state in direct_law_ids:
-        return [l for l in LAWS if l["id"] == state]
-
     ids = {l["id"] for l in state_detector.applicable_laws([state], LAWS)}
     return [l for l in LAWS if l["id"] in ids]
 
@@ -250,12 +235,14 @@ def compute_scores(policy, state):
         idxs = law_to_class_idxs.get(lid, [])
         if not idxs:
             law_coverage.append({"id": lid, "label": law["label"],
-                                  "coverage_percent": 0.0, "num_classes": 0, "num_above": 0})
+                                  "coverage_percent": 0.0, "num_classes": 0,
+                                  "num_above": 0, "num_above_threshold": 0})
             continue
         above = sum(1 for i in idxs if float(sims[i]) >= THRESHOLD)
         pct   = round(100.0 * above / len(idxs), 2)
         law_coverage.append({"id": lid, "label": law["label"],
-                              "coverage_percent": pct, "num_classes": len(idxs), "num_above": above})
+                              "coverage_percent": pct, "num_classes": len(idxs),
+                              "num_above": above, "num_above_threshold": above})
         total_cls += len(idxs); total_above += above
     overall = round(100.0 * total_above / total_cls, 2) if total_cls else 0.0
 
@@ -271,9 +258,11 @@ def compute_scores(policy, state):
             continue
         covered.append({
             "class_label": class_labels[idx],
+            "class_iri":   c_iri,
             "law_labels":  [l["label"] for l in LAWS if l["id"] in law_ids],
             "bert_sim":    round(sim, 4),
             "desc":        class_descs.get(c_iri, ""),
+            "class_desc":  class_descs.get(c_iri, ""),
             "annotation":  _annotation(URIRef(c_iri)),
         })
     covered.sort(key=lambda x: x["bert_sim"], reverse=True)
@@ -297,10 +286,13 @@ def compute_scores(policy, state):
                         break
             missing.append({
                 "class_label": class_labels[idx],
+                "class_iri":   c_iri,
                 "law_label":   law["label"],
+                "law_id":      lid,
                 "bert_sim":    round(sim, 4),
                 "gap":         round(THRESHOLD - sim, 4),
                 "desc":        class_descs.get(c_iri, ""),
+                "class_desc":  class_descs.get(c_iri, ""),
                 "annotation":  " | ".join(ann_parts[:2]),
             })
     missing.sort(key=lambda x: x["gap"], reverse=True)
@@ -325,136 +317,7 @@ def compute_scores(policy, state):
 # =============================================================================
 # CHAT CONTEXT — built from compute_scores(), reads KG directly
 # =============================================================================
-def _trim(text, n=260):
-    text = re.sub(r"\s+", " ", (text or "")).strip()
-    return text if len(text) <= n else text[:n].rstrip() + "..."
-
-
-def _law_annotation_for_class(c_iri, law):
-    """Return only the rdfs:hasLaw-style annotation text that belongs to one law."""
-    node = URIRef(c_iri)
-    hits = []
-    keywords = [law.get("label", ""), law.get("id", "").replace("_", " ")] + law.get("keywords", [])
-    keywords = [k.lower() for k in keywords if k]
-    for pred in LAW_PREDS:
-        for obj in g.objects(node, pred):
-            raw = str(obj).strip()
-            low = raw.lower()
-            if any(k in low for k in keywords):
-                hits.append(raw)
-    return " | ".join(dict.fromkeys(hits))
-
-
-def _section_hint(text):
-    """Best-effort section/reference extraction from KG law annotation text."""
-    if not text:
-        return "No section identifier found in KG annotation"
-    patterns = [
-        r"(?:section|sec\.|§)\s*[0-9A-Za-z_.:-]+",
-        r"ORS\s*[0-9A-Za-z_.:-]+",
-        r"Cal\.?\s+Civ\.?\s+Code\s*§?\s*[0-9A-Za-z_.:-]+",
-        r"NISTIR\s*8259(?:A)?",
-        r"PL\s*116-207|Public Law\s*116-207",
-        r"HB\s*2395|SB-327|HB\s*4",
-    ]
-    for pat in patterns:
-        m = re.search(pat, text, flags=re.I)
-        if m:
-            return m.group(0)
-    return "No section identifier found in KG annotation"
-
-#!!! collects annots from requested law from the user 
-def law_rules_from_kg(laws=None):
-    """Build a clean law -> rule/class list directly from rdfs:hasLaw annotations."""
-    laws = laws or LAWS
-    out = {}
-    for law in laws:
-        rules = []
-        for idx in law_to_class_idxs.get(law["id"], []):
-            c_iri = class_iris[idx]
-            ann = _law_annotation_for_class(c_iri, law)
-            rules.append({
-                "class_label": class_labels[idx],
-                "section_hint": _section_hint(ann),
-                "annotation": ann or class_descs.get(c_iri, ""),
-            })
-        # de-duplicate by class label while preserving order
-        seen = set()
-        clean = []
-        for r in rules:
-            key = r["class_label"].lower()
-            if key not in seen:
-                seen.add(key)
-                clean.append(r)
-        out[law["id"]] = {"id": law["id"], "label": law["label"], "rules": clean}
-    return out
-
-
-def law_comparison_from_kg(laws=None):
-    """Return Law A has X / Law B has Y / common Z based on KG law annotations."""
-    rules_by_law = law_rules_from_kg(laws)
-    label_to_laws = {}
-    for lid, law_data in rules_by_law.items():
-        for r in law_data["rules"]:
-            label_to_laws.setdefault(r["class_label"], set()).add(lid)
-
-    common = sorted([lbl for lbl, lids in label_to_laws.items() if len(lids) >= 2])
-    unique = {}
-    for lid, law_data in rules_by_law.items():
-        unique[lid] = sorted([
-            r["class_label"] for r in law_data["rules"]
-            if len(label_to_laws.get(r["class_label"], set())) == 1
-        ])
-
-    return {"rules_by_law": rules_by_law, "common_rules": common, "unique_rules": unique}
-
-
-def _explicit_laws_from_question(question):
-    """Return only laws explicitly named/aliased in the user's question."""
-    q = (question or "").lower()
-    wanted = []
-    for law in LAWS:
-        if law.get("id", "").lower() in q or law.get("label", "").lower() in q:
-            wanted.append(law)
-            continue
-        aliases = {
-            "OR_HB_2395": ["oregon", "hb 2395", "oregon hb"],
-            "CA_SB_327": ["california", "sb-327", "sb 327"],
-            "TX_HB_4": ["texas", "hb 4", "tx hb"],
-            "IoT_Cyber_Act_2020": ["iot cybersecurity", "iot cybersecurity improvement", "pl 116-207", "pl 116 207", "public law", "plaw", "federal"],
-            "NISTIR_8259": ["nist", "nistir", "8259"],
-        }.get(law.get("id", ""), [])
-        if any(a in q for a in aliases):
-            wanted.append(law)
-    return wanted
-
-
-def _wanted_laws_from_question(question, state="all"):
-    """Keep chat context small by only sending laws the user asked about."""
-    explicit = _explicit_laws_from_question(question)
-    if explicit:
-        return explicit
-    if state and state != "all":
-        return _active_laws(state)
-    return LAWS
-
-#!!! guides what user is asking for (not llm due to token calls
-def _question_intent(question):
-    q = (question or "").lower()
-    return {
-        "comparison": any(w in q for w in ["compare", "difference", "different", "common", "overlap", "versus", " vs ", "same"]),
-        "rules": any(w in q for w in ["rules", "rule", "requirements", "classes", "make up", "specified", "legislation annotations"]),
-        "missing": any(w in q for w in ["missing", "non-compliant", "non compliant", "does not comply", "fails", "gap", "weakly"]),
-        "score": any(w in q for w in ["score", "coverage", "percent", "grade"]),
-    }
-
-
-def build_chat_context(mfg, scores, state, question=""):
-    """
-    Small, intent-aware context for Groq's 6k TPM limit.
-    Instead of always sending every hasLaw annotation, only send the sections
-    needed for the user's question.
-    """
+def build_chat_context(mfg, scores, state):
     name    = mfg["name"]
     covered = scores["covered"]
     missing = scores["missing"]
@@ -462,92 +325,35 @@ def build_chat_context(mfg, scores, state, question=""):
     overall = scores["overall"]
     w       = scores["weighted"]
     scope   = state if state != "all" else "all regulations"
-    intent  = _question_intent(question)
-    wanted_laws = _wanted_laws_from_question(question, state)
-    explicit_laws_for_context = _explicit_laws_from_question(question)
-    wanted_law_ids = {law["id"] for law in wanted_laws}
-    wanted_law_labels = {law["label"] for law in wanted_laws}
 
-    # Default to the most useful context when the question is vague.
-    if not any(intent.values()):
-        intent["score"] = True
-        intent["missing"] = True
+    out = [f"Manufacturer: {name} | Scope: {scope}",
+           "", "[COMPLIANCE SCORES]"]
+    for lw in lc:
+        out.append(f"  {lw['label']}: {lw['coverage_percent']}%  "
+                   f"({lw['num_above']}/{lw['num_classes']} classes, flat BERT)")
+    out.append(f"  Overall flat BERT: {overall}%")
+    if w:
+        out.append(f"  Overall weighted (agent-graded): {w.get('overall_weighted_score','?')}%  "
+                   f"Grade: {w.get('overall_grade','?')}")
+        for lr in w.get("law_scores", []):
+            out.append(f"    {lr['label']}: {lr['weighted_score']}% ({lr['grade']})")
 
-    out = [f"Manufacturer: {name} | Active compliance scope: {scope}"]
+    if covered:
+        out.append(f"\n[COVERED — {len(covered)} classes]")
+        for c in covered[:12]:
+            out.append(f"  ✓ {c['class_label']}  sim={c['bert_sim']:.3f}  "
+                       f"laws: {', '.join(c['law_labels'])}")
 
-    if intent["score"] or intent["missing"]:
-        out.append("\nCompliance scores for the selected manufacturer:")
-        display_lc = [lw for lw in lc if not explicit_laws_for_context or lw.get("id") in wanted_law_ids or lw.get("label") in wanted_law_labels]
-        for lw in display_lc:
-            out.append(f"  {lw['label']}: {lw['coverage_percent']}% ({lw['num_above']}/{lw['num_classes']} requirements covered)")
-        if not explicit_laws_for_context:
-            out.append(f"  Overall flat coverage: {overall}%")
-            if w:
-                out.append(f"  Overall weighted: {w.get('overall_weighted_score','?')}% | Grade: {w.get('overall_grade','?')}")
-
-    # Law rules from KG: compact by default; annotations only for the requested law(s).
-    if intent["rules"]:
-        rules = law_rules_from_kg(wanted_laws)
-        out.append("\nRules found in the knowledge graph for the requested legislation:")
-        for law in wanted_laws:
-            law_data = rules.get(law["id"], {"rules": []})
-            out.append(f"  {law['label']} includes these requirements:")
-            for r in law_data["rules"][:25]:
-                ann = _trim(r.get("annotation", ""), 150)
-                out.append(f"    - Requirement name: {r['class_label']} | Legal text note: {ann}")
-
-    # Clean law comparison: only class names, no long annotations.
-    if intent["comparison"]:
-        compare_laws = wanted_laws if len(wanted_laws) >= 2 else LAWS
-        kg_compare = law_comparison_from_kg(compare_laws)
-        out.append("\nLegislation comparison based on rules in the knowledge graph:")
-        out.append("  Requirements shared by the requested laws: " + (", ".join(kg_compare["common_rules"][:40]) if kg_compare["common_rules"] else "None found"))
-        for law in compare_laws:
-            rules = kg_compare["rules_by_law"].get(law["id"], {}).get("rules", [])
-            unique = kg_compare["unique_rules"].get(law["id"], [])
-            out.append(f"  {law['label']} includes: " + (", ".join([r["class_label"] for r in rules[:25]]) if rules else "None found"))
-            out.append(f"  Requirements mainly found in {law['label']}: " + (", ".join(unique[:20]) if unique else "None found"))
-
-    # Missing details: for a specific law, include EVERY missing item for that law.
-    # For broad/all-regulation questions, keep a top-N fallback to avoid Groq TPM errors.
-    if intent["missing"]:
-        explicit_laws = explicit_laws_for_context
-        law_labels_filter = {law["label"] for law in explicit_laws}
-
-        if law_labels_filter:
-            missing_for_context = [m for m in missing if m.get("law_label") in law_labels_filter]
-            header_scope = ", ".join(sorted(law_labels_filter))
-            out.append(f"\nMissing requirements for the selected manufacturer policy — all items for {header_scope} ({len(missing_for_context)}):")
-        elif state and state != "all":
-            # compute_scores() is already scoped by state, so this is safe to show in full.
-            missing_for_context = missing
-            out.append(f"\nMissing requirements for the selected manufacturer policy — all items for the active filter ({len(missing_for_context)}):")
-        else:
-            missing_for_context = missing[:10]
-            out.append(f"\nMissing requirements for the selected manufacturer policy — top {min(len(missing), 10)} of {len(missing)}:")
-
-        for m in missing_for_context:
-            out.append(f"  ✗ Requirement name: {m['class_label']} | Law: {m['law_label']}")
-            if m.get("desc"):
-                out.append(f"    Plain meaning / requirement: {_trim(m['desc'], 180)}")
-            if m.get("annotation"):
-                out.append(f"    Legal text note from KG: {_trim(m['annotation'], 260)}")
-        if not missing_for_context:
-            out.append("  None — all requirements appear addressed for this law/filter.")
-
-    # Include a tiny covered sample only if useful and there is room.
-    if (intent["missing"] or intent["score"]) and covered:
-        covered_for_context = []
-        for c in covered:
-            law_labels = [label for label in c.get("law_labels", []) if not explicit_laws_for_context or label in wanted_law_labels]
-            if law_labels:
-                item = dict(c)
-                item["law_labels"] = law_labels
-                covered_for_context.append(item)
-        if covered_for_context:
-            out.append(f"\nCovered examples — top {min(len(covered_for_context), 6)}:")
-            for c in covered_for_context[:6]:
-                out.append(f"  ✓ Requirement name: {c['class_label']} | Law: {', '.join(c['law_labels'])}")
+    if missing:
+        out.append(f"\n[MISSING — {len(missing)} classes]")
+        for m in missing[:15]:
+            out.append(f"  ✗ {m['class_label']}  [{m['law_label']}]  gap={m['gap']:.3f}")
+            if m["desc"]:
+                out.append(f"    Requirement: {m['desc'][:200]}")
+            if m["annotation"]:
+                out.append(f"    KG text: {m['annotation'][:200]}")
+    else:
+        out.append("\n[MISSING] None — all requirements appear addressed.")
 
     return "\n".join(out)
 
@@ -557,24 +363,24 @@ def build_chat_context(mfg, scores, state, question=""):
 # =============================================================================
 SYSTEM_PROMPT = (
     "You are a concise IoT privacy compliance assistant. "
-    "Answer only from the structured DATA provided from the knowledge graph. Never invent law sections, rules, or facts.\n\n"
+    "Answer ONLY from the structured data provided — never invent facts.\n\n"
     "Rules:\n"
-    "• Do not print internal headings such as KG LAW COMPARISON, KG LEGISLATION RULES, DATA, or COMPLIANCE SCORES.\n"
-    "• Do not use phrases like gap score, section/reference, BERT, KG annotation, class IRI, or technical ontology terms in the final answer.\n"
-    "• When explaining legislation rules, translate each requirement name into natural language for a non-technical reader. Explain what the law is asking a company to do, not just the class name.\n"
-    "• When comparing two laws, answer naturally: first say what both laws share, then say what each law uniquely emphasizes. Do not use a rigid template or internal labels.\n"
-    "• For missing privacy-policy coverage, list every missing item provided in DATA. For each item, use about two plain-English sentences: what the law expects, and what the selected policy does not clearly say.\n"
-    "• Only reference the specific law or laws provided in the DATA. If only NISTIR 8259 is provided, do not mention Public Law 116-207 or any other federal law.\n"
-    "• Scores → one sentence, prefer weighted score when available. Nothing missing → one sentence, stop.\n"
-    "• Keep answers focused; usually under 300 words unless the user asks for all rules."
+    "• Missing rules → list as '• ClassName: one sentence what it requires.' No sub-bullets.\n"
+    "• Nothing missing → one sentence, stop.\n"
+    "• Scores → one sentence, prefer weighted score when available.\n"
+    "• Explanations → 2-3 sentences max.\n"
+    "• Do not repeat the same point under different headings.\n"
+    "• Only reference laws that appear in the DATA section.\n"
+    "• Total response: under 150 words."
 )
+
 def _call_llm(question, context):
     try:
         resp = groq_client.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=[{"role": "system", "content": SYSTEM_PROMPT},
                       {"role": "user",   "content": f"DATA:\n{context}\n\nQUESTION:\n{question}"}],
-            temperature=0.1, max_tokens=700)
+            temperature=0.1, max_tokens=300)
         return resp.choices[0].message.content.strip()
     except Exception as e:
         return f"Error: {e}"
@@ -645,6 +451,11 @@ def detail():
         "covered":      scores["covered"],
         "missing":      scores["missing"],
         "weighted":     scores["weighted"],
+
+        # Frontend compatibility aliases
+        "overall_coverage": scores["overall"],
+        "suggested_classes": scores["covered"],
+        "missing_classes": scores["missing"],
     })
 
 
@@ -663,7 +474,7 @@ def chat():
         return jsonify({"answer": "Manufacturer not found."}), 404
 
     scores  = compute_scores(mfg["policy"], state)
-    context = build_chat_context(mfg, scores, state, question)
+    context = build_chat_context(mfg, scores, state)
     answer  = ask_llm(question, context)
     return jsonify({"answer": answer}), 200
 
