@@ -1,36 +1,61 @@
 {
-  "ontology_path": "data/knowledge_graph_n8259a/finalmerged.rdf",
+  "ontology_path": "data/knowledge_graph_n8259a/inferred_merged.rdf",
   "manufacturer_class_iri": "http://example.org/onto.owl#Manufacturer",
   "policy_property_iri": "http://example.org/onto.owl#policy_description",
-   "top_k": 8,
-
+  "top_k": 8,
   "law_annotation_predicates": [
     "http://www.w3.org/2000/01/rdf-schema#hasLaw"
   ],
   "laws": [
-  {
-    "id": "OR_HB_2395",
-    "label": "Oregon HB 2395",
-    "keywords": ["HB 2395", "Oregon HB 2395"]
-  },
-   {
-      "id": "CA_SB_327",
-      "label": "California SB-327",
-      "keywords": ["SB-327", "California"]
+    {
+      "id": "OR_HB_2395",
+      "label": "Oregon HB 2395",
+      "keywords": [
+        "HB 2395",
+        "Oregon HB 2395"
+      ]
     },
     {
-      "id": "PL_116-207",
-      "label": "Public Law 116-207",
-      "keywords": ["PL 116-207", "Federal", "Public Law"]
+      "id": "CA_SB_327",
+      "label": "California SB-327",
+      "keywords": [
+        "SB-327",
+        "California",
+        "connected devices"
+      ]
+    },
+    {
+      "id": "IoT_Cyber_Act_2020",
+      "label": "IoT Cybersecurity Improvement Act of 2020",
+      "keywords": [
+        "IoT Cybersecurity Act",
+        "PL 116-207",
+        "federal IoT law",
+        "2020"
+      ]
     },
     {
       "id": "NISTIR_8259",
       "label": "NISTIR 8259",
-      "keywords": ["NISTIR 8259", "NIST"]
+      "keywords": [
+        "NISTIR 8259",
+        "NIST",
+        "foundational cybersecurity",
+        "IoT device manufacturers"
+      ]
+    },
+    {
+      "id": "TX_HB_4",
+      "label": "Texas HB 4",
+      "keywords": [
+        "Texas HB 4",
+        "TX HB 4"
+      ]
     }
   ],
-  "coverage_threshold": 0.05,
-
-  "similarity_method": "tfidf",              
+    "coverage_threshold": 0.27,
+  "similarity_method": "bert",              
+  "coverage_threshold_bert": 0.27,
+  "coverage_threshold_tfidf": 7,
   "embedding_model_name": "all-MiniLM-L6-v2" 
 }
