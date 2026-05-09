@@ -14,14 +14,16 @@
         z-index: 100;
         display: flex;
         align-items: center;
-        justify-content: space-between;
+        justify-content: center;
         background: rgba(20, 20, 40, 0.92);
         backdrop-filter: blur(8px);
         padding: 0 24px;
-        height: 52px;
+        height: 56px;
         border-bottom: 1px solid rgba(255,255,255,0.1);
       }
       .ribbon-logo {
+        position: absolute;
+        left: 24px;
         font-size: 15px;
         font-weight: 700;
         color: #fff;
@@ -36,9 +38,9 @@
         background: none;
         border: none;
         color: rgba(255,255,255,0.65);
-        font-size: 14px;
-        font-weight: 500;
-        padding: 6px 16px;
+        font-size: 18px;
+        font-weight: 600;
+        padding: 8px 20px;
         border-radius: 6px;
         cursor: pointer;
         transition: background 0.15s, color 0.15s;
@@ -282,7 +284,7 @@
       /* ── Live compliance charts ── */
       .charts-row {
         display: grid;
-        grid-template-columns: 1fr 1fr;
+        grid-template-columns: 1fr;
         gap: 20px;
         margin: 24px 0;
       }
@@ -321,7 +323,7 @@
       <button class="ribbon-tab active" id="tab-btn-home" onclick="showTab('home', this)">Home</button>
       <button class="ribbon-tab" id="tab-btn-laws" onclick="showTab('laws', this)">About the Laws</button>
       <button class="ribbon-tab" id="tab-btn-about" onclick="showTab('about', this)">About the App</button>
-      <button class="ribbon-tab" id="tab-btn-history" onclick="showTab('history', this)">&#128200; Coverage History</button>
+
     </div>
   </nav>
 
@@ -331,34 +333,63 @@
     <div id="tab-home" class="page-section active">
 
       <h1 style="text-align: center; color: white; font-size: 46px; font-family: 'Arial Black', sans-serif;">Privacy Policy Compliance Analyzer</h1>
-      <p class="subtitle;" style="color: white;">
-        Select a manufacturer &amp; corresponding Privacy Policy from the list or input your own manufacturer and Privacy Policy to and check coverage
-         under California, Oregon, and federal laws and standards (NISTIR 8259 &amp; PL 116-207).
-      </p>
 
 <!-- ---------------------------------------------------------------- MANUFACTURER SELECT --------------------------------------------------------- -->
 
-      <div class="panel">
+      <!-- Two launcher cards -->
+      <div style="display:flex; gap:20px; margin-bottom: 28px; flex-wrap:wrap;">
+
+        <!-- Box 1: Manufacturer -->
+        <div onclick="toggleLauncherPanel('mfgPanel', 'regPanel')"
+             style="flex:1; min-width:220px; background:#fff; border:1px solid #ddd;
+                    border-radius:14px; padding:22px 26px; cursor:pointer; transition:background 0.2s, box-shadow 0.2s;
+                    display:flex; align-items:center; gap:16px; box-shadow:0 2px 8px rgba(0,0,0,0.08);"
+             onmouseover="this.style.boxShadow='0 4px 18px rgba(0,0,0,0.15)'"
+             onmouseout="this.style.boxShadow='0 2px 8px rgba(0,0,0,0.08)'">
+          <div style="width:44px;height:44px;background:#1a1a2e;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/><line x1="12" y1="12" x2="12" y2="16"/><line x1="10" y1="14" x2="14" y2="14"/></svg>
+          </div>
+          <div>
+            <div style="color:#1a1a2e; font-size:16px; font-weight:700; margin-bottom:3px;">Manufacturer</div>
+            <div style="color:#666; font-size:13px;">Select or add a manufacturer to analyze</div>
+          </div>
+        </div>
+
+        <!-- Box 2: Regulation Config -->
+        <div onclick="toggleLauncherPanel('regPanel', 'mfgPanel')"
+             style="flex:1; min-width:220px; background:#fff; border:1px solid #ddd;
+                    border-radius:14px; padding:22px 26px; cursor:pointer; transition:background 0.2s, box-shadow 0.2s;
+                    display:flex; align-items:center; gap:16px; box-shadow:0 2px 8px rgba(0,0,0,0.08);"
+             onmouseover="this.style.boxShadow='0 4px 18px rgba(0,0,0,0.15)'"
+             onmouseout="this.style.boxShadow='0 2px 8px rgba(0,0,0,0.08)'">
+          <div style="width:44px;height:44px;background:#1a1a2e;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93A10 10 0 1 0 4.93 19.07M12 2v2M12 20v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M2 12h2M20 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+          </div>
+          <div>
+            <div style="color:#1a1a2e; font-size:16px; font-weight:700; margin-bottom:3px;">Regulation Config</div>
+            <div style="color:#666; font-size:13px;">Add regulations or run incremental updates</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Manufacturer Panel -->
+      <div id="mfgPanel" class="panel hidden" style="margin-bottom:24px;">
+        <h3 style="margin-top:0; margin-bottom:16px;">Manufacturer Selection</h3>
         <label for="manufacturerSelect"><strong>Select Manufacturer:</strong></label>
-        <div class="row">
+        <div class="row" style="margin-top:8px;">
           <select id="manufacturerSelect"></select>
           <button id="btnLoad">Classify</button>
         </div>
-        <button id="btnToggleAdd" style="margin-top: 12px;">+ Add a Manufacturer</button>
-        <div class="muted small" id="countNote"></div>
-        
-<!-- ---------------------------------------------------------------- ADD A MANUFACTURER --------------------------------------------------------- -->
+        <div class="muted small" id="countNote" style="margin-top:8px;"></div>
 
-      <div class="panel hidden" id="addManufacturerPanel" style="margin-top: 24px;">
+        <hr style="margin:20px 0; border-color:rgba(0,0,0,0.1);">
 
-        <strong>Add a Manufacturer<strong>
-
+        <h4 style="margin-top:0; margin-bottom:12px;">Add a Manufacturer</h4>
         <div class="field">
           <label for="newName"><strong>Name</strong></label>
           <input id="newName" type="text" placeholder="e.g., Apple"
                  style="width:100%; padding:6px 8px; margin-top:4px; border-radius:8px; border:1px solid var(--border);" />
         </div>
-
         <div class="field" style="margin-top: 12px;">
           <label for="newPolicy"><strong>Policy description</strong></label>
           <textarea id="newPolicy" rows="4"
@@ -371,10 +402,47 @@
           <button id="btnExtractPdf" type="button" style="margin-top:8px;">Extract text from PDF</button>
           <div id="pdfStatus" class="small muted" style="margin-top: 6px;"></div>
         </div>
-
         <button id="btnAdd" style="margin-top: 12px;">Save Manufacturer</button>
         <div id="addStatus" class="small muted" style="margin-top: 8px;"></div>
       </div>
+
+      <!-- Regulation Config Panel -->
+      <div id="regPanel" class="panel hidden" style="margin-bottom:24px;">
+        <h3 style="margin-top:0; margin-bottom:16px;">Regulation Configuration</h3>
+
+        <h4 style="margin-top:0; margin-bottom:10px;">Add a New Regulation</h4>
+        <div class="field">
+          <label><strong>Regulation Name</strong></label>
+          <input type="text" id="newRegName" placeholder="e.g., GDPR Article 32"
+                 style="width:100%; padding:6px 8px; margin-top:4px; border-radius:8px; border:1px solid var(--border);" />
+        </div>
+        <div class="field" style="margin-top:10px;">
+          <label><strong>Regulation Description / Requirements</strong></label>
+          <textarea id="newRegDesc" rows="3" placeholder="Describe the compliance requirements..."
+            style="width:100%; padding:6px 8px; margin-top:4px; border-radius:8px; border:1px solid var(--border);"></textarea>
+        </div>
+        <button style="margin-top:10px;" onclick="alert('Add Regulation handler — wire to your backend endpoint.')">Save Regulation</button>
+
+        <hr style="margin:20px 0; border-color:rgba(0,0,0,0.1);">
+
+        <h4 style="margin-top:0; margin-bottom:10px;">Incremental Regulation Update</h4>
+        <div class="field">
+          <label><strong>Select Regulation to Update</strong></label>
+          <select id="updateRegSelect" style="width:100%; padding:6px 8px; margin-top:4px; border-radius:8px; border:1px solid var(--border);">
+            <option value="">— choose a regulation —</option>
+            <option value="california">California SB-327</option>
+            <option value="oregon">Oregon HB 2395</option>
+            <option value="nistir">NISTIR 8259</option>
+            <option value="plaw">Federal PL 116-207</option>
+          </select>
+        </div>
+        <div class="field" style="margin-top:10px;">
+          <label><strong>Updated / Additional Requirements</strong></label>
+          <textarea id="updateRegDesc" rows="3" placeholder="Paste updated clause or amendment text..."
+            style="width:100%; padding:6px 8px; margin-top:4px; border-radius:8px; border:1px solid var(--border);"></textarea>
+        </div>
+        <button style="margin-top:10px;" onclick="alert('Incremental update handler — wire to your backend endpoint.')">Apply Update</button>
+        <div class="small muted" style="margin-top:8px;">This will re-classify all manufacturers against the updated regulation.</div>
       </div>
 
       <!-- Details -->
@@ -404,47 +472,29 @@
           <strong><span id="coverageLabel">Overall Coverage</span>: </strong><span id="overallPercent">--</span>%
         </div>
 
-        <!-- ── Live compliance charts ── -->
-        <div class="charts-row" id="chartsRow" style="display:none;">
+        <div id="laws" class="cards law-cards"></div>
+
+        <!-- Live compliance charts — below law percentage cards -->
+        <div class="charts-row" id="chartsRow" style="display:none; margin-top:20px;">
           <div class="chart-box">
-            <h4>Coverage by Law | Radar</h4>
-            <canvas id="radarChart"></canvas>
-          </div>
-          <div class="chart-box">
-            <h4>Compliant vs Uncompliant Means | Line Chart</h4>
+            <h4>Compliant vs Non-Compliant Rules | Bar Chart</h4>
             <canvas id="barChart"></canvas>
           </div>
         </div>
 
-        <div id="laws" class="cards law-cards"></div>
-
         <!-- Top & Missing classes side by side -->
         <div class="row two-col">
           <div class="col">
-            <h3 id="classHeader">Compliant Means</h3>
+            <h3 id="classHeader">Compliant Rules</h3>
             <div id="classes" class="cards"></div>
           </div>
           <div class="col">
-            <h3 id="missingHeader">Non-Compliant Means</h3>
+            <h3 id="missingHeader">Non-Compliant Rules</h3>
             <div id="missingClasses" class="cards"></div>
           </div>
         </div>
         <hr style="margin-top: 20px;margin-bottom: 20px;">
 
-<!-- ---------------------------------------------------------------- PRIVACY BOT --------------------------------------------------------- -->
-
-          <h1 style="text-align: center;">Privacy Bot Assistant</h1>
-          <p style="text-align: center; margin-top: 8px; margin-bottom: 8px; font-weight: normal;">Ask me if your selected manufacturer covers a certain compliance!</p>
-          <div id="chatBox" style="background: #f5f5f5; border-radius: 8px; padding: 12px; min-height: 80px; margin-bottom: 12px; max-height: 300px; overflow-y: auto;">
-              <p class="muted small" id="chatPlaceholder">Your conversation will appear here...</p>
-            </div>
-
-            <div class="row" style="gap: 8px;">
-              <input id="chatInput" type="text" placeholder="e.g. Does Ring cover unique passwords?"
-                style="flex:1; padding: 8px; border-radius: 8px; border: 1px solid var(--border);" />
-              <button id="btnChat">Ask</button>
-            </div>
-            <div id="chatStatus" class="small muted" style="margin-top: 6px;"></div>
       </div>
 
     </div><!-- /tab-home -->
@@ -592,47 +642,6 @@
     </div><!-- /tab-about -->
 
 
-    <!-- ═══════════════════════════ HISTORY TAB ═══════════════════════════ -->
-    <div id="tab-history" class="page-section">
-
-      <h1 style="text-align:center; color:white; font-size:36px; font-family:'Arial Black',sans-serif; margin-bottom:6px;">Coverage History Timeline</h1>
-      <p style="text-align:center; color:rgba(255,255,255,0.7); margin-bottom:24px;">
-        Track how compliance coverage changes over time as you classify manufacturers. Each classification is saved as a snapshot.
-      </p>
-
-      <div class="timeline-controls">
-        <label for="historyMfgFilter">Manufacturer:</label>
-        <select id="historyMfgFilter" onchange="renderHistory()">
-          <option value="all">All Manufacturers</option>
-        </select>
-        <label for="historyLawFilter" style="margin-left:8px;">Law:</label>
-        <select id="historyLawFilter" onchange="renderHistory()">
-          <option value="overall">Overall Coverage</option>
-          <option value="california">California SB-327</option>
-          <option value="oregon">Oregon HB 2395</option>
-          <option value="nistir">NISTIR 8259</option>
-          <option value="plaw">Federal PL 116-207</option>
-        </select>
-        <button class="timeline-clear-btn" onclick="clearHistory()">&#128465; Clear All History</button>
-      </div>
-
-      <div id="historyChartWrap" class="timeline-chart-wrap">
-        <h3 id="historyChartTitle">Overall Coverage Over Time</h3>
-        <canvas id="historyChart" height="100"></canvas>
-      </div>
-
-      <div id="historyTableWrap" style="margin-top:20px;">
-        <h3 style="color:#fff; margin-bottom:12px;">All Snapshots</h3>
-        <div id="historyTableContainer"></div>
-      </div>
-
-      <div id="historyEmpty" class="timeline-empty" style="display:none;">
-        <div class="big">&#128200;</div>
-        <p><strong>No history yet</strong></p>
-        <p>Go to the Home tab, select a manufacturer, and click <strong>Classify</strong> to record your first snapshot.</p>
-      </div>
-
-    </div><!-- /tab-history -->
   </div><!-- /container -->
 
     <script>
@@ -645,55 +654,10 @@
 
       document.getElementById('tab-' + name).classList.add('active');
       btn.classList.add('active');
-
-      if (name === 'history') {
-        setTimeout(() => {
-          renderHistory();
-        }, 100);
-      }
     }
 
-        function renderChart(labels, data) {
-      const canvas = document.getElementById('historyChart');
-      if (!canvas) return;
 
-      const ctx = canvas.getContext('2d');
 
-      if (historyChart) {
-        historyChart.destroy();
-      }
-
-      historyChart = new Chart(ctx, {
-        type: 'line',
-        data: {
-          labels: labels,
-          datasets: [{
-            label: 'Coverage %',
-            data: data,
-            tension: 0.3,
-            fill: true
-          }]
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          scales: {
-            y: {
-              beginAtZero: true,
-              max: 100
-            }
-          }
-        }
-      });
-    }
-
-          function getHistory() {
-        return JSON.parse(localStorage.getItem("history") || "[]");
-      }
-
-      function saveHistory(data) {
-        localStorage.setItem("history", JSON.stringify(data));
-      }
 
 
       // ── Home button ──
@@ -875,7 +839,7 @@
         let overallPct = 0;
         let coverageLabel = 'Overall Coverage';
         
-        overallPct = data.overall_coverage || 0;
+        overallPct = data.overall || 0;
         
         if (stateFilter === 'all') {
           coverageLabel = 'Overall Coverage';
@@ -889,32 +853,8 @@
           coverageLabel = 'Federal Public Law 116-207 Coverage';
         }
         
-        console.log('Using overall_coverage from backend:', overallPct);
-        // Record history snapshot
+        console.log('Using overall from backend:', overallPct);
 
-        function recordSnapshot(name, iri, lawCoverage, overallPct) {
-        const snap = {
-          id: Date.now(),
-          timestamp: new Date().toISOString(),
-          name,
-          iri,
-          overall: parseFloat(overallPct) || 0,
-          laws: {}
-        };
-        (lawCoverage || []).forEach(law => {
-          const key = (law.label || '').toLowerCase();
-          if (key.includes('california') || key.includes('sb-327')) snap.laws.california = parseFloat(law.coverage_percent) || 0;
-          else if (key.includes('oregon') || key.includes('hb 2395')) snap.laws.oregon = parseFloat(law.coverage_percent) || 0;
-          else if (key.includes('nistir') || key.includes('8259')) snap.laws.nistir = parseFloat(law.coverage_percent) || 0;
-          else if (key.includes('116-207') || key.includes('federal') || key.includes('plaw')) snap.laws.plaw = parseFloat(law.coverage_percent) || 0;
-        });
-        const history = getHistory();
-        history.push(snap);
-        saveHistory(history);
-        refreshHistoryMfgFilter();
-      }
-      
-        recordSnapshot(data.name || sel.options[sel.selectedIndex].text, iri, lawCoverage, overallPct);
         el('coverageLabel').textContent = coverageLabel;
         el('overallPercent').textContent = overallPct.toFixed(1);
 
@@ -923,7 +863,7 @@
 
         lawCoverage.forEach(law => {
           const pct = law.coverage_percent || 0;
-          const status = statusFromCoverage(pct, law.num_above_threshold, law.num_classes);
+          const status = statusFromCoverage(pct, law.num_above, law.num_classes);
 
           const card = document.createElement('div');
           card.className = 'card';
@@ -936,7 +876,7 @@
               <strong>Status:</strong>&nbsp;${status}
             </div>
             <div class="chip">
-              <strong>Covered:</strong>&nbsp;${law.num_above_threshold} / ${law.num_classes} means
+              <strong>Covered:</strong>&nbsp;${law.num_above} / ${law.num_classes} Rules
             </div>
           `;
           lawsDiv.appendChild(card);
@@ -946,21 +886,21 @@
         renderLiveCharts(lawCoverage);
 
         if (stateFilter !== 'all') {
-          const classesDiv = el('means');
+          const classesDiv = el('classes');
           const classHeader = el('classHeader');
           classesDiv.innerHTML = '';
 
-          const topClasses = data.suggested_classes || [];
+          const topClasses = data.covered || [];
           const INITIAL_COMPLIANT_DISPLAY = 5;
 
           if (!topClasses.length) {
             classHeader.style.display = '';
-            classesDiv.innerHTML = '<p class="muted small">No compliant means found.</p>';
+            classesDiv.innerHTML = '<p class="muted small">No compliant rules found.</p>';
           } else {
             classHeader.style.display = '';
             
             topClasses.forEach((cls, index) => {
-              const desc = cls.class_desc || "";
+              const desc = cls.desc || cls.annotation || "";
               const { shortHtml, fullHtml } = buildLawSections(desc, stateFilter);
 
               const card = document.createElement('div');
@@ -1022,7 +962,7 @@
             if (topClasses.length > INITIAL_COMPLIANT_DISPLAY) {
               const showMoreBtn = document.createElement('button');
               showMoreBtn.className = 'show-more-btn';
-              showMoreBtn.textContent = `Show ${topClasses.length - INITIAL_COMPLIANT_DISPLAY} more compliant means`;
+              showMoreBtn.textContent = `Show ${topClasses.length - INITIAL_COMPLIANT_DISPLAY} more compliant rules`;
               showMoreBtn.id = 'showMoreCompliant';
               
               showMoreBtn.addEventListener('click', () => {
@@ -1032,7 +972,7 @@
                 if (isExpanded) {
                   const extraCards = classesDiv.querySelectorAll('.extra-compliant-card');
                   extraCards.forEach(card => card.classList.add('hidden'));
-                  showMoreBtn.textContent = `Show ${topClasses.length - INITIAL_COMPLIANT_DISPLAY} more compliant means`;
+                  showMoreBtn.textContent = `Show ${topClasses.length - INITIAL_COMPLIANT_DISPLAY} more compliant rules`;
                 } else {
                   hiddenCards.forEach(card => card.classList.remove('hidden'));
                   showMoreBtn.textContent = 'Show less';
@@ -1047,11 +987,11 @@
           const missingHeader = el('missingHeader');
           missingDiv.innerHTML = '';
 
-          const rawMissing = data.missing_classes || [];
+          const rawMissing = data.missing || [];
 
           const missingByClass = new Map();
           rawMissing.forEach(mc => {
-            const key = mc.class_iri || mc.class_label;
+            const key = mc.class_label;
             if (!missingByClass.has(key)) {
               missingByClass.set(key, mc);
             }
@@ -1068,7 +1008,7 @@
             missingDiv.style.display = '';
             
             missingClasses.forEach((mc, index) => {
-              const desc = mc.class_desc || "";
+              const desc = mc.desc || mc.annotation || "";
               const { shortHtml, fullHtml } = buildLawSections(desc, stateFilter);
 
               const card = document.createElement('div');
@@ -1120,7 +1060,7 @@
             if (missingClasses.length > INITIAL_MISSING_DISPLAY) {
               const showMoreBtn = document.createElement('button');
               showMoreBtn.className = 'show-more-btn';
-              showMoreBtn.textContent = `Show ${missingClasses.length - INITIAL_MISSING_DISPLAY} more non-compliant means`;
+              showMoreBtn.textContent = `Show ${missingClasses.length - INITIAL_MISSING_DISPLAY} more non-compliant rules`;
               showMoreBtn.id = 'showMoreMissing';
               
               showMoreBtn.addEventListener('click', () => {
@@ -1130,7 +1070,7 @@
                 if (isExpanded) {
                   const extraCards = missingDiv.querySelectorAll('.extra-missing-card');
                   extraCards.forEach(card => card.classList.add('hidden'));
-                  showMoreBtn.textContent = `Show ${missingClasses.length - INITIAL_MISSING_DISPLAY} more non-compliant means`;
+                  showMoreBtn.textContent = `Show ${missingClasses.length - INITIAL_MISSING_DISPLAY} more non-compliant rules`;
                 } else {
                   hiddenCards.forEach(card => card.classList.remove('hidden'));
                   showMoreBtn.textContent = 'Show less';
@@ -1256,42 +1196,22 @@
         }
       };
 
-      el('btnToggleAdd').onclick = function() {
-        const panel = el('addManufacturerPanel');
-        const btn = el('btnToggleAdd');
-        
-        if (panel.classList.contains('hidden')) {
-          panel.classList.remove('hidden');
-          btn.textContent = '− Hide Add Manufacturer';
+      function toggleLauncherPanel(showId, hideId) {
+        const show = document.getElementById(showId);
+        const hide = document.getElementById(hideId);
+        const isOpen = !show.classList.contains('hidden');
+        hide.classList.add('hidden');
+        if (isOpen) {
+          show.classList.add('hidden');
         } else {
-          panel.classList.add('hidden');
-          btn.textContent = '+ Add a Manufacturer';
+          show.classList.remove('hidden');
         }
-      };
+      }
 
+      el('btnLoad').onclick = loadDetail;
 
-      // ══════════════════════════════════════════════
-      // Coverage History Timeline
-      // ══════════════════════════════════════════════
-
-      const HISTORY_KEY = 'ppca_coverage_history';
-      let radarChartInstance = null;
       let barChartInstance   = null;
 
-      let historyChartInstance = null;
-
-      function getHistory() {
-        try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]'); }
-        catch(e) { return []; }
-      }
-
-      function saveHistory(arr) {
-        localStorage.setItem(HISTORY_KEY, JSON.stringify(arr));
-      }
-
-      
-
-      // ── Live compliance charts rendered after each Classify ──
       function renderLiveCharts(lawCoverage) {
         const row = el('chartsRow');
         if (!lawCoverage || !lawCoverage.length) {
@@ -1301,41 +1221,8 @@
         if (row) row.style.display = '';
 
         const labels  = lawCoverage.map(l => l.label);
-        const pcts    = lawCoverage.map(l => parseFloat(l.coverage_percent) || 0);
-        const covered = lawCoverage.map(l => l.num_above_threshold || 0);
-        const gaps    = lawCoverage.map(l => (l.num_classes || 0) - (l.num_above_threshold || 0));
-
-        // ── Radar chart ── this pulls results from the /coverage function uses renderlivecharts function
-        const radarCanvas = el('radarChart');
-        if (radarChartInstance) { radarChartInstance.destroy(); radarChartInstance = null; }
-        radarChartInstance = new Chart(radarCanvas, {
-          type: 'radar',
-          data: {
-            labels: labels,
-            datasets: [{
-              label: 'Coverage %',
-              data: pcts,
-              backgroundColor: 'rgba(78,121,167,0.2)',
-              borderColor: 'rgba(78,121,167,0.9)',
-              pointBackgroundColor: 'rgba(78,121,167,1)',
-              pointRadius: 4,
-              borderWidth: 2
-            }]
-          },
-          options: {
-            responsive: true,
-            plugins: { legend: { display: false } },
-            scales: {
-              r: {
-                min: 0, max: 100,
-                ticks: { stepSize: 25, font: { size: 10 }, color: '#666' },
-                pointLabels: { font: { size: 11 }, color: '#333' },
-                grid: { color: 'rgba(0,0,0,0.08)' },
-                angleLines: { color: 'rgba(0,0,0,0.08)' }
-              }
-            }
-          }
-        });
+        const covered = lawCoverage.map(l => l.num_above || 0);
+        const gaps    = lawCoverage.map(l => (l.num_classes || 0) - (l.num_above || 0));
 
         // ── Bar chart ──
         const barCanvas = el('barChart');
@@ -1371,162 +1258,10 @@
             scales: {
               x: { stacked: false, ticks: { color: '#555', font: { size: 11 } }, grid: { display: false } },
               y: { beginAtZero: true, ticks: { color: '#555', stepSize: 1 }, grid: { color: '#eee' },
-                   title: { display: true, text: 'Means', color: '#555', font: { size: 11 } } }
+                   title: { display: true, text: 'Rules', color: '#555', font: { size: 11 } } }
             }
           }
         });
-      }
-
-      function refreshHistoryMfgFilter() {
-        const sel = el('historyMfgFilter');
-        if (!sel) return;
-        const history = getHistory();
-        const names = [...new Set(history.map(s => s.name))].sort();
-        const cur = sel.value;
-        sel.innerHTML = '<option value="all">All Manufacturers</option>';
-        names.forEach(n => {
-          const opt = document.createElement('option');
-          opt.value = n;
-          opt.textContent = n;
-          sel.appendChild(opt);
-        });
-        if (names.includes(cur)) sel.value = cur;
-      }
-
-      function renderHistory() {
-        const history = getHistory();
-        const mfgFilter = (el('historyMfgFilter') || {}).value || 'all';
-        const lawFilter = (el('historyLawFilter') || {}).value || 'overall';
-        const chartWrap = el('historyChartWrap');
-        const emptyDiv  = el('historyEmpty');
-        const tableWrap = el('historyTableWrap');
-
-        if (!history.length) {
-          if (chartWrap) chartWrap.style.display = 'none';
-          if (tableWrap) tableWrap.style.display = 'none';
-          if (emptyDiv)  emptyDiv.style.display = '';
-          return;
-        }
-        if (chartWrap) chartWrap.style.display = '';
-        if (tableWrap) tableWrap.style.display = '';
-        if (emptyDiv)  emptyDiv.style.display = 'none';
-
-        const filtered = mfgFilter === 'all'
-          ? history
-          : history.filter(s => s.name === mfgFilter);
-
-        // Build datasets grouped by manufacturer
-        const byMfg = {};
-        filtered.forEach(s => {
-          if (!byMfg[s.name]) byMfg[s.name] = [];
-          byMfg[s.name].push(s);
-        });
-
-        const COLORS = ['#4e79a7','#f28e2b','#e15759','#76b7b2','#59a14f','#edc948','#b07aa1','#ff9da7','#9c755f','#bab0ac'];
-        const datasets = Object.entries(byMfg).map(([name, snaps], i) => {
-          snaps.sort((a,b) => a.id - b.id);
-          return {
-            label: name,
-            data: snaps.map(s => ({
-              x: new Date(s.timestamp).toLocaleString(),
-              y: lawFilter === 'overall' ? s.overall
-                : lawFilter === 'california' ? (s.laws.california ?? null)
-                : lawFilter === 'oregon'     ? (s.laws.oregon ?? null)
-                : lawFilter === 'nistir'     ? (s.laws.nistir ?? null)
-                : lawFilter === 'plaw'       ? (s.laws.plaw ?? null)
-                : s.overall
-            })),
-            borderColor: COLORS[i % COLORS.length],
-            backgroundColor: COLORS[i % COLORS.length] + '33',
-            tension: 0.35,
-            pointRadius: 5,
-            pointHoverRadius: 7,
-            fill: false,
-            borderWidth: 2.5
-          };
-        });
-
-        const allLabels = [...new Set(filtered.map(s => new Date(s.timestamp).toLocaleString()))];
-        allLabels.sort((a,b) => new Date(a) - new Date(b));
-
-        const lawTitle = { overall:'Overall Coverage', california:'California SB-327', oregon:'Oregon HB 2395', nistir:'NISTIR 8259', plaw:'Federal PL 116-207' };
-        el('historyChartTitle').textContent = (lawTitle[lawFilter] || 'Coverage') + ' Over Time';
-
-        const canvas = el('historyChart');
-        if (historyChartInstance) { historyChartInstance.destroy(); historyChartInstance = null; }
-
-        historyChartInstance = new Chart(canvas, {
-          type: 'line',
-          data: { labels: allLabels, datasets },
-          options: {
-            responsive: true,
-            interaction: { mode: 'index', intersect: false },
-            plugins: {
-              legend: { position: 'top', labels: { color: '#333', font: { size: 13 } } },
-              tooltip: {
-                callbacks: {
-                  label: ctx => ` ${ctx.dataset.label}: ${ctx.parsed.y !== null ? ctx.parsed.y.toFixed(1) + '%' : 'N/A'}`
-                }
-              }
-            },
-            scales: {
-              x: { ticks: { color: '#555', maxRotation: 30, font: { size: 11 } }, grid: { color: '#eee' } },
-              y: {
-                min: 0, max: 100,
-                ticks: { color: '#555', callback: v => v + '%' },
-                grid: { color: '#eee' },
-                title: { display: true, text: 'Coverage %', color: '#555' }
-              }
-            }
-          }
-        });
-
-        // Build table
-        const container = el('historyTableContainer');
-        const sorted = [...history].sort((a,b) => b.id - a.id);
-        const rows = sorted.map(s => {
-          const pct = lawFilter === 'overall' ? s.overall
-            : lawFilter === 'california' ? (s.laws.california ?? null)
-            : lawFilter === 'oregon'     ? (s.laws.oregon ?? null)
-            : lawFilter === 'nistir'     ? (s.laws.nistir ?? null)
-            : lawFilter === 'plaw'       ? (s.laws.plaw ?? null)
-            : s.overall;
-          const pctStr = pct !== null ? pct.toFixed(1) + '%' : 'N/A';
-          const cls = pct === null ? '' : pct >= 75 ? 'high' : pct >= 40 ? 'mid' : 'low';
-          return `<tr>
-            <td>${new Date(s.timestamp).toLocaleString()}</td>
-            <td><strong>${s.name}</strong></td>
-            <td><span class="snap-badge ${cls}">${pctStr}</span></td>
-            <td>${s.laws.california !== undefined ? s.laws.california.toFixed(1)+'%' : '—'}</td>
-            <td>${s.laws.oregon !== undefined ? s.laws.oregon.toFixed(1)+'%' : '—'}</td>
-            <td>${s.laws.nistir !== undefined ? s.laws.nistir.toFixed(1)+'%' : '—'}</td>
-            <td>${s.laws.plaw !== undefined ? s.laws.plaw.toFixed(1)+'%' : '—'}</td>
-            <td><button class="snap-del-btn" onclick="deleteSnapshot(${s.id})" title="Delete">&#10005;</button></td>
-          </tr>`;
-        }).join('');
-
-        container.innerHTML = `<table class="timeline-snapshots-table">
-          <thead><tr>
-            <th>Date &amp; Time</th><th>Manufacturer</th>
-            <th>${lawTitle[lawFilter] || 'Coverage'}</th>
-            <th>California</th><th>Oregon</th><th>NISTIR</th><th>Federal PL</th><th></th>
-          </tr></thead>
-          <tbody>${rows}</tbody>
-        </table>`;
-      }
-
-      function deleteSnapshot(id) {
-        const history = getHistory().filter(s => s.id !== id);
-        saveHistory(history);
-        refreshHistoryMfgFilter();
-        renderHistory();
-      }
-
-      function clearHistory() {
-        if (!confirm('Clear all coverage history? This cannot be undone.')) return;
-        localStorage.removeItem(HISTORY_KEY);
-        refreshHistoryMfgFilter();
-        renderHistory();
       }
 
       el('btnLoad').onclick = loadDetail;
@@ -1543,17 +1278,17 @@
 
       if (localStorage.getItem('darkMode') === 'enabled') {
         body.classList.add('dark-mode');
-        darkModeToggle.textContent = '☀️';
+        darkModeToggle.textContent = 'Light';
       }
 
       darkModeToggle.onclick = function() {
         body.classList.toggle('dark-mode');
         
         if (body.classList.contains('dark-mode')) {
-          darkModeToggle.textContent = '☀️';
+          darkModeToggle.textContent = 'Light';
           localStorage.setItem('darkMode', 'enabled');
         } else {
-          darkModeToggle.textContent = '🌙';
+          darkModeToggle.textContent = 'Dark';
           localStorage.setItem('darkMode', 'disabled');
         }
       };
@@ -1578,9 +1313,12 @@
   userMsg.style.display = 'flex';
   userMsg.style.justifyContent = 'flex-end';
   userMsg.style.marginBottom = '12px';
+  const stateVal = el('stateFilter').value;
+  const stateLabel = el('stateFilter').options[el('stateFilter').selectedIndex].text;
+  const stateTag = stateVal !== 'all' ? ` <span style="font-size:10px;background:rgba(0,0,0,0.15);padding:1px 6px;border-radius:8px;">${stateLabel}</span>` : '';
   userMsg.innerHTML = `
     <div style="background: #007bff; color: white; padding: 10px 14px; border-radius: 18px; max-width: 70%; word-wrap: break-word; font-style:normal;">
-     ${question}
+     ${question}${stateTag}
     </div>
   `;
   chatBox.appendChild(userMsg);
@@ -1592,7 +1330,7 @@
     const res = await fetch("/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question, iri })
+      body: JSON.stringify({ question, iri, state: el('stateFilter').value })
     });
     const data = await res.json();
 
@@ -1623,11 +1361,199 @@
   }
 }
 
-el('btnChat').onclick = sendChat;
-el('chatInput').addEventListener('keydown', e => {
-  if (e.key === 'Enter') sendChat();
-});
-
     </script>
+
+  <!-- ═══════════════════ FLOATING PRIVACY BOT ═══════════════════ -->
+  <style>
+    #privacyBotWidget {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      z-index: 9999;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 10px;
+    }
+    #privacyBotPanel {
+      width: 360px;
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.22);
+      overflow: hidden;
+      transition: max-height 0.3s cubic-bezier(.4,0,.2,1), opacity 0.3s;
+      max-height: 520px;
+      opacity: 1;
+      display: flex;
+      flex-direction: column;
+    }
+    #privacyBotPanel.bot-collapsed {
+      max-height: 0;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .bot-header {
+      background: #1a1a2e;
+      color: #fff;
+      padding: 12px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-weight: 700;
+      font-size: 15px;
+      flex-shrink: 0;
+    }
+    .bot-header span { font-size: 13px; font-weight: 400; color: rgba(255,255,255,0.7); }
+    .bot-minimize-btn {
+      background: rgba(255,255,255,0.15);
+      border: none;
+      color: #fff;
+      border-radius: 6px;
+      padding: 2px 10px;
+      cursor: pointer;
+      font-size: 18px;
+      line-height: 1.2;
+      transition: background 0.15s;
+    }
+    .bot-minimize-btn:hover { background: rgba(255,255,255,0.28); }
+    #chatBox {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px;
+      background: #f5f5f5;
+      min-height: 200px;
+      max-height: 300px;
+    }
+    .bot-input-row {
+      display: flex;
+      gap: 6px;
+      padding: 10px 12px;
+      background: #fff;
+      border-top: 1px solid #eee;
+      flex-shrink: 0;
+    }
+    .bot-input-row input {
+      flex: 1;
+      padding: 7px 10px;
+      border-radius: 8px;
+      border: 1px solid #ddd;
+      font-size: 13px;
+      outline: none;
+    }
+    .bot-input-row input:focus { border-color: #1a1a2e; }
+    .bot-input-row button {
+      padding: 7px 14px;
+      border-radius: 8px;
+      background: #1a1a2e;
+      color: #fff;
+      border: none;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .bot-input-row button:hover { background: #2e2e5e; }
+    #chatStatus { font-size: 11px; color: #888; padding: 2px 12px 6px; background: #fff; }
+    #privacyBotFab {
+      width: 52px;
+      height: 52px;
+      border-radius: 50%;
+      background: #1a1a2e;
+      border: none;
+      color: #fff;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      cursor: pointer;
+      box-shadow: 0 4px 18px rgba(0,0,0,0.28);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.15s, transform 0.15s;
+      flex-shrink: 0;
+    }
+    #privacyBotFab:hover { background: #2e2e5e; transform: scale(1.08); }
+
+    /* ── Fullscreen mode ── */
+    #privacyBotWidget.bot-fullscreen {
+      bottom: 0;
+      right: 0;
+      width: 100vw;
+      height: 100vh;
+      gap: 0;
+    }
+    #privacyBotWidget.bot-fullscreen #privacyBotPanel {
+      width: 100%;
+      height: 100%;
+      max-height: 100vh;
+      border-radius: 0;
+      flex: 1;
+    }
+    #privacyBotWidget.bot-fullscreen #chatBox {
+      max-height: none;
+      flex: 1;
+    }
+    #privacyBotWidget.bot-fullscreen #privacyBotFab {
+      display: none;
+    }
+    .bot-fullscreen-btn {
+      background: rgba(255,255,255,0.15);
+      border: none;
+      color: #fff;
+      border-radius: 6px;
+      padding: 2px 9px;
+      cursor: pointer;
+      font-size: 14px;
+      line-height: 1.4;
+      transition: background 0.15s;
+      margin-right: 4px;
+    }
+    .bot-fullscreen-btn:hover { background: rgba(255,255,255,0.28); }
+  </style>
+
+  <div id="privacyBotWidget">
+    <div id="privacyBotPanel">
+      <div class="bot-header">
+        Privacy Bot
+        <span>Ask about compliance</span>
+        <div style="display:flex;align-items:center;gap:4px;">
+          <button class="bot-fullscreen-btn" onclick="toggleBotFullscreen()" id="botFullscreenBtn" title="Fullscreen">&#x26F6;</button>
+          <button class="bot-minimize-btn" onclick="toggleBot()" title="Minimize">&#8722;</button>
+        </div>
+      </div>
+      <div id="chatBox">
+        <p style="color:#aaa; font-size:13px; margin:0;" id="chatPlaceholder">Your conversation will appear here...</p>
+      </div>
+      <div class="bot-input-row">
+        <input id="chatInput" type="text" placeholder="e.g. Does Ring cover unique passwords?" />
+        <button id="btnChat">Ask</button>
+      </div>
+      <div id="chatStatus"></div>
+    </div>
+    <button id="privacyBotFab" onclick="toggleBot()" title="Toggle Privacy Bot">BOT</button>
+  </div>
+
+  <script>
+    function toggleBot() {
+      document.getElementById('privacyBotPanel').classList.toggle('bot-collapsed');
+    }
+
+    function toggleBotFullscreen() {
+      const widget = document.getElementById('privacyBotWidget');
+      const btn = document.getElementById('botFullscreenBtn');
+      const isFullscreen = widget.classList.toggle('bot-fullscreen');
+      btn.title = isFullscreen ? 'Exit Fullscreen' : 'Fullscreen';
+      btn.innerHTML = isFullscreen ? '&#x2715;' : '&#x26F6;';
+      // Scroll chat to bottom after layout change
+      const chatBox = document.getElementById('chatBox');
+      setTimeout(() => { chatBox.scrollTop = chatBox.scrollHeight; }, 50);
+    }
+
+    document.getElementById('btnChat').onclick = sendChat;
+    document.getElementById('chatInput').addEventListener('keydown', e => {
+      if (e.key === 'Enter') sendChat();
+    });
+  </script>
+
   </body>
 </html>
