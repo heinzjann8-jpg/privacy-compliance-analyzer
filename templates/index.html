@@ -373,7 +373,7 @@
       </div>
 
       <!-- Manufacturer Panel -->
-      <div id="mfgPanel" class="panel" style="margin-bottom:24px;">
+      <div id="mfgPanel" class="panel hidden" style="margin-bottom:24px;">
         <h3 style="margin-top:0; margin-bottom:16px;">Manufacturer Selection</h3>
         <label for="manufacturerSelect"><strong>Select Manufacturer:</strong></label>
         <div class="row" style="margin-top:8px;">
@@ -432,7 +432,6 @@
             <option value="">— choose a regulation —</option>
             <option value="california">California SB-327</option>
             <option value="oregon">Oregon HB 2395</option>
-            <option value="texas">Texas HB 4</option>
             <option value="nistir">NISTIR 8259</option>
             <option value="plaw">Federal PL 116-207</option>
           </select>
@@ -465,7 +464,6 @@
             <option value="all">All Regulations</option>
             <option value="california">California</option>
             <option value="oregon">Oregon</option>
-            <option value="texas">Texas</option>
             <option value="nistir">NISTIR 8259</option>
             <option value="plaw">Federal PL 116-207</option>
           </select>
@@ -647,14 +645,6 @@
   </div><!-- /container -->
 
     <script>
-    console.log("MAIN INDEX JS IS RUNNING - patched");
-    window.addEventListener("error", function(e) {
-      console.error("JS ERROR:", e.message, "line:", e.lineno, "file:", e.filename);
-    });
-    window.addEventListener("unhandledrejection", function(e) {
-      console.error("PROMISE ERROR:", e.reason);
-    });
-
     let historychart = null; 
 
       // ── Tab switching ──
@@ -785,14 +775,7 @@
 }
 
       async function loadDropdown() {
-        console.log('Loading manufacturers from /list...');
         const res = await fetch('/list');
-        if (!res.ok) {
-          const text = await res.text();
-          console.error('LIST FAILED:', res.status, text);
-          alert('Could not load manufacturers. /list returned status ' + res.status);
-          return;
-        }
         const items = await res.json();
         console.log('Manufacturers loaded:', items);
         const sel = el('manufacturerSelect');
@@ -814,11 +797,9 @@
           sel.appendChild(opt);
         });
 
-        el('countNote').textContent = `${items.length} total manufacturer(s). Pick one and click Classify to run the analysis.`;
+        el('countNote').textContent = `${items.length} total manufacturer(s)`;
         sel.value = items[0].iri;
-        // Do NOT auto-run /detail on page load. On Render this can trigger a heavy
-        // BERT scoring request before the page finishes loading and cause 502s.
-        // The user controls when analysis runs by clicking the Classify button.
+        loadDetail();
       }
 
       async function loadDetail() {
@@ -827,18 +808,9 @@
         if (!iri) return;
 
         const stateFilter = el('stateFilter').value;
-        const countNote = el('countNote');
-        if (countNote) countNote.textContent = 'Running analysis... please wait.';
 
         const res = await fetch('/detail?iri=' + encodeURIComponent(iri) + '&state=' + encodeURIComponent(stateFilter));
-        if (!res.ok) {
-          const text = await res.text();
-          console.error("DETAIL FAILED:", res.status, text);
-          alert("Backend /detail failed with status " + res.status + ". Check Render logs.");
-          return;
-        }
         const data = await res.json();
-        if (countNote) countNote.textContent = 'Analysis loaded.';
 
         el('details').classList.remove('hidden');
         el('mName').textContent = data.name || '(no label)';
@@ -875,8 +847,6 @@
           coverageLabel = 'California Legislature Coverage';
         } else if (stateFilter === 'oregon') {
           coverageLabel = 'Oregon Legislature Coverage';
-        } else if (stateFilter === 'texas') {
-          coverageLabel = 'Texas Legislature Coverage';
         } else if (stateFilter === 'nistir') {
           coverageLabel = 'NISTIR Standard Coverage';
         } else if (stateFilter === 'plaw') {
@@ -1300,30 +1270,28 @@
       el('btnExtractPdf').onclick = extractPdfToPolicy;
       el('stateFilter').addEventListener('change', loadDetail);
 
-      //loadDropdown();
+      loadDropdown();
 
-      // Dark mode toggle - only run if the button exists
+      // Dark mode toggle
       const darkModeToggle = el('darkModeToggle');
       const body = document.body;
 
-      if (darkModeToggle) {
-        if (localStorage.getItem('darkMode') === 'enabled') {
-          body.classList.add('dark-mode');
-          darkModeToggle.textContent = 'Light';
-        }
-
-        darkModeToggle.onclick = function() {
-          body.classList.toggle('dark-mode');
-          
-          if (body.classList.contains('dark-mode')) {
-            darkModeToggle.textContent = 'Light';
-            localStorage.setItem('darkMode', 'enabled');
-          } else {
-            darkModeToggle.textContent = 'Dark';
-            localStorage.setItem('darkMode', 'disabled');
-          }
-        };
+      if (localStorage.getItem('darkMode') === 'enabled') {
+        body.classList.add('dark-mode');
+        darkModeToggle.textContent = 'Light';
       }
+
+      darkModeToggle.onclick = function() {
+        body.classList.toggle('dark-mode');
+        
+        if (body.classList.contains('dark-mode')) {
+          darkModeToggle.textContent = 'Light';
+          localStorage.setItem('darkMode', 'enabled');
+        } else {
+          darkModeToggle.textContent = 'Dark';
+          localStorage.setItem('darkMode', 'disabled');
+        }
+      };
 
       async function sendChat() {
   const input = el('chatInput');
