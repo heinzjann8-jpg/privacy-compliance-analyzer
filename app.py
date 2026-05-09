@@ -418,6 +418,10 @@ def _find_mfg(name):
 def index():
     return render_template("index.html")
 
+@app.get("/healthz")
+def healthz():
+    return jsonify({"ok": True}), 200
+
 @app.get("/list")
 def list_mfg():
     return jsonify([{"iri": m["iri"], "name": m["name"]} for m in manufacturers])
