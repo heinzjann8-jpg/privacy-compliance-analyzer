@@ -1,1559 +1,829 @@
-<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Privacy Policy Compliance Analyzer</title>
-    <link rel="stylesheet" href="/static/style.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-    <style>
-      /* ── Ribbon nav ── */
-      .ribbon {
-        position: sticky;
-        top: 0;
-        z-index: 100;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background: rgba(20, 20, 40, 0.92);
-        backdrop-filter: blur(8px);
-        padding: 0 24px;
-        height: 56px;
-        border-bottom: 1px solid rgba(255,255,255,0.1);
-      }
-      .ribbon-logo {
-        position: absolute;
-        left: 24px;
-        font-size: 15px;
-        font-weight: 700;
-        color: #fff;
-        letter-spacing: 0.3px;
-        white-space: nowrap;
-      }
-      .ribbon-tabs {
-        display: flex;
-        gap: 4px;
-      }
-      .ribbon-tab {
-        background: none;
-        border: none;
-        color: rgba(255,255,255,0.65);
-        font-size: 18px;
-        font-weight: 600;
-        padding: 8px 20px;
-        border-radius: 6px;
-        cursor: pointer;
-        transition: background 0.15s, color 0.15s;
-      }
-      .ribbon-tab:hover {
-        background: rgba(255,255,255,0.1);
-        color: #fff;
-      }
-      .ribbon-tab.active {
-        background: rgba(255,255,255,0.15);
-        color: #fff;
-      }
-      .ribbon-right {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-      }
+"""
+app.py — IoT Privacy Policy Compliance Analyzer
+================================================
+Single-source-of-truth architecture:
 
-      /* ── Page sections ── */
-      .page-section { display: none; }
-      .page-section.active { display: block; }
+  compute_scores(policy, state)  →  one dict with sims + flat + weighted scores
+       ↓                                    ↓
+  /detail sends it to the browser      /chat uses the same dict to build the
+  (UI renders weighted + flat)          LLM context → chatbot matches the UI
 
-      /* ── About / Laws panels ── */
-      .info-panel {
-        background: #ffffff;
-        border-radius: 12px;
-        padding: 28px 32px;
-        margin-bottom: 24px;
-        border: 1px solid #e0e0e0;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-      }
-      .info-panel h2 {
-        color: #1a1a2e;
-        margin-top: 0;
-        margin-bottom: 8px;
-        font-size: 22px;
-      }
-      .info-panel h3 {
-        color: #1a1a2e;
-        margin-top: 28px;
-        margin-bottom: 8px;
-        font-size: 17px;
-      }
-      .info-panel p {
-        color: #444;
-        line-height: 1.7;
-        margin-top: 0;
-        font-weight: normal;
-      }
-      .info-panel code {
-        background: #f0f0f0;
-        color: #c0392b;
-        padding: 2px 6px;
-        border-radius: 4px;
-        font-size: 13px;
-      }
-      .info-panel hr {
-        border: none;
-        border-top: 1px solid #e0e0e0;
-        margin: 24px 0;
-      }
-      .law-badge {
-        display: inline-block;
-        background: #1a1a2e;
-        color: #fff;
-        font-size: 12px;
-        font-weight: 600;
-        padding: 3px 10px;
-        border-radius: 20px;
-        margin-bottom: 10px;
-        letter-spacing: 0.3px;
-      }
-      .info-btn {
-        display: inline-block;
-        margin-top: 12px;
-        padding: 8px 18px;
-        background: #1a1a2e;
-        color: #fff;
-        border: 1px solid #1a1a2e;
-        border-radius: 8px;
-        font-size: 13px;
-        font-weight: 500;
-        text-decoration: none;
-        cursor: pointer;
-        transition: background 0.15s;
-      }
-      .info-btn:hover { background: #2e2e5e; border-color: #2e2e5e; }
+KG access: thin SPARQL reads (rdfs:label, rdfs:comment, hasLaw annotations). //analyze more scores*****U&**&*&**&**&
+No intermediate text blobs.  No alias expansion.
+"""
 
-      .about-grid {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 16px;
-        margin-top: 20px;
-      }
-      .about-card {
-        background: #f8f9fa;
-        border: 1px solid #e0e0e0;
-        border-radius: 10px;
-        padding: 18px 20px;
-      }
-      .about-card h4 {
-        color: #1a1a2e;
-        margin: 0 0 8px 0;
-        font-size: 15px;
-      }
-      .about-card p {
-        color: #555;
-        font-size: 13px;
-        margin: 0;
-        line-height: 1.6;
-      }
+import re, os, json, hashlib
+from pathlib import Path
+from functools import lru_cache
 
-      /* ── Home button ── */
-      .ribbon-home {
-        background: rgba(255,255,255,0.18);
-        border: 1px solid rgba(255,255,255,0.3);
-        color: #fff;
-        font-size: 14px;
-        font-weight: 600;
-        padding: 5px 14px;
-        border-radius: 6px;
-        cursor: pointer;
-        transition: background 0.15s, color 0.15s;
-        margin-right: 8px;
-        display: flex;
-        align-items: center;
-        gap: 5px;
-      }
-      .ribbon-home:hover {
-        background: rgba(255,255,255,0.28);
-      }
+import numpy as np
+from flask import Flask, render_template, request, jsonify
+from rdflib import Graph, URIRef, RDF, RDFS, OWL, Literal
+from sentence_transformers import SentenceTransformer
+from werkzeug.utils import secure_filename
+from PyPDF2 import PdfReader
+from groq import Groq
 
-      /* ── Coverage History Timeline ── */
-      #tab-history { padding-bottom: 40px; }
-      .timeline-controls {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        flex-wrap: wrap;
-        margin-bottom: 20px;
-        background: rgba(255,255,255,0.07);
-        border: 1px solid rgba(255,255,255,0.12);
-        border-radius: 12px;
-        padding: 18px 22px;
-      }
-      .timeline-controls label { color: #fff; font-weight: 600; font-size: 14px; }
-      .timeline-controls select {
-        padding: 6px 12px;
-        border-radius: 8px;
-        border: 1px solid rgba(255,255,255,0.25);
-        background: rgba(255,255,255,0.12);
-        color: #fff;
-        font-size: 14px;
-        cursor: pointer;
-      }
-      .timeline-controls select option { background: #1a1a2e; color: #fff; }
-      .timeline-clear-btn {
-        margin-left: auto;
-        padding: 6px 14px;
-        background: rgba(220,53,69,0.2);
-        border: 1px solid rgba(220,53,69,0.5);
-        color: #ff6b7a;
-        border-radius: 8px;
-        font-size: 13px;
-        font-weight: 600;
-        cursor: pointer;
-        transition: background 0.15s;
-      }
-      .timeline-clear-btn:hover { background: rgba(220,53,69,0.4); }
-      .timeline-chart-wrap {
-        background: #fff;
-        border-radius: 12px;
-        padding: 24px;
-        margin-bottom: 24px;
-        border: 1px solid #e0e0e0;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-        position: relative;
-        min-height: 320px;
-      }
-      .timeline-chart-wrap h3 {
-        margin: 0 0 16px 0;
-        color: #1a1a2e;
-        font-size: 17px;
-      }
-      .timeline-empty {
-        text-align: center;
-        padding: 60px 20px;
-        color: rgba(255,255,255,0.5);
-        font-size: 15px;
-        background: rgba(255,255,255,0.04);
-        border: 1px dashed rgba(255,255,255,0.15);
-        border-radius: 12px;
-      }
-      .timeline-empty p { margin: 8px 0; }
-      .timeline-empty .big { font-size: 36px; margin-bottom: 12px; }
-      .timeline-snapshots-table {
-        width: 100%;
-        border-collapse: collapse;
-        font-size: 13px;
-        background: #fff;
-        border-radius: 12px;
-        overflow: hidden;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-      }
-      .timeline-snapshots-table th {
-        background: #1a1a2e;
-        color: #fff;
-        padding: 10px 14px;
-        text-align: left;
-        font-weight: 600;
-      }
-      .timeline-snapshots-table td {
-        padding: 9px 14px;
-        border-bottom: 1px solid #f0f0f0;
-        color: #333;
-      }
-      .timeline-snapshots-table tr:last-child td { border-bottom: none; }
-      .timeline-snapshots-table tr:hover td { background: #f8f9fa; }
-      .snap-badge {
-        display: inline-block;
-        padding: 2px 8px;
-        border-radius: 10px;
-        font-size: 11px;
-        font-weight: 700;
-      }
-      .snap-badge.high   { background: #d4edda; color: #155724; }
-      .snap-badge.mid    { background: #fff3cd; color: #856404; }
-      .snap-badge.low    { background: #f8d7da; color: #721c24; }
-      .snap-del-btn {
-        background: none;
-        border: none;
-        color: #dc3545;
-        cursor: pointer;
-        font-size: 15px;
-        padding: 2px 6px;
-        border-radius: 4px;
-        transition: background 0.1s;
-      }
-      .snap-del-btn:hover { background: #f8d7da; }
+import step2_state_detector as state_detector
+import step4a_timestamps as ts
+import step4b_regulation_update as reg_update
+import step1_add_regulation as reg_add
+import step3_agentic_weighted_grader as wgrader
 
-      /* ── Live compliance charts ── */
-      .charts-row {
-        display: grid;
-        grid-template-columns: 1fr;
-        gap: 20px;
-        margin: 24px 0;
-      }
-      .chart-box {
-        background: #fff;
-        border-radius: 12px;
-        padding: 20px 22px;
-        border: 1px solid #e0e0e0;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-        position: relative;
-        min-height: 260px;
-      }
-      .chart-box h4 {
-        margin: 0 0 14px 0;
-        font-size: 14px;
-        font-weight: 600;
-        color: #1a1a2e;
-        text-transform: uppercase;
-        letter-spacing: 0.4px;
-      }
-      @media (max-width: 640px) {
-        .charts-row { grid-template-columns: 1fr; }
-      }
-      @media (max-width: 600px) {
-        .about-grid { grid-template-columns: 1fr; }
-        .ribbon-logo { display: none; }
-      }
-    </style>
-  </head>
-  <body>
+# =============================================================================
+# FLASK
+# =============================================================================
+app = Flask(__name__)
+app.register_blueprint(wgrader.bp)
+UPLOAD_FOLDER = "uploads"
+app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-  <!-- ═══════════════════════════ RIBBON NAV ═══════════════════════════ -->
-  <nav class="ribbon">
-    <span class="ribbon-logo">Privacy Policy Compliance Analyzer</span>
-    <div class="ribbon-tabs">
-      <button class="ribbon-tab active" id="tab-btn-home" onclick="showTab('home', this)">Home</button>
-      <button class="ribbon-tab" id="tab-btn-laws" onclick="showTab('laws', this)">About the Laws</button>
-      <button class="ribbon-tab" id="tab-btn-about" onclick="showTab('about', this)">About the App</button>
+def allowed_file(fn):
+    return "." in fn and fn.rsplit(".", 1)[1].lower() == "pdf"
 
-    </div>
-  </nav>
+# =============================================================================
+# CONFIG
+# =============================================================================
+CFG           = json.load(open("config.json", encoding="utf-8"))
+ONTO_PATH     = Path(os.environ.get("ONTO_PATH", "") or CFG["ontology_path"]).resolve()
+MFG_CLS       = URIRef(CFG["manufacturer_class_iri"])
+POLICY_PROP   = URIRef(CFG["policy_property_iri"])
+LAW_PREDS     = [URIRef(p) for p in CFG.get("law_annotation_predicates", [])]
+LAWS          = CFG.get("laws", [])
+THRESHOLD     = float(CFG.get("coverage_threshold", 0.27))
+EMBED_MODEL   = CFG.get("embedding_model_name", "all-MiniLM-L6-v2")
 
-  <div class="container">
+USER_ADDED_PROP       = URIRef("http://example.org/onto.owl#userAddedManufacturer")
+APPLIES_TO_STATE_PROP = URIRef("http://example.org/onto.owl#appliesToState")
 
-    <!-- ═══════════════════════════ HOME TAB ═══════════════════════════ -->
-    <div id="tab-home" class="page-section active">
+# =============================================================================
+# STATE NORMALISATION  (frontend value → STATE_CATALOG ID)
+# =============================================================================
+_STATE_MAP = {
+    "all": "all", "oregon": "OR", "california": "CA",
+    "texas": "TX",
+    # Keep federal sources separate so selecting/asking for NISTIR does not
+    # also pull Public Law 116-207 into the chatbot response.
+    "nistir": "NISTIR_8259",
+    "plaw": "IoT_Cyber_Act_2020",
+    "or": "OR", "ca": "CA", "tx": "TX", "us_fed": "US_FED",
+    "nist": "NISTIR_8259", "8259": "NISTIR_8259",
+    "public_law": "IoT_Cyber_Act_2020", "pl_116_207": "IoT_Cyber_Act_2020",
+}
+def norm_state(raw):
+    return _STATE_MAP.get((raw or "").strip().lower(), "all")
 
-      <h1 style="text-align: center; color: white; font-size: 46px; font-family: 'Arial Black', sans-serif;">Privacy Policy Compliance Analyzer</h1>
+# =============================================================================
+# LOAD ONTOLOGY
+# =============================================================================
+print(f"[load] {ONTO_PATH}")
+g = Graph()
+g.parse(str(ONTO_PATH))
+print(f"[load] {len(g)} triples")
 
-<!-- ---------------------------------------------------------------- MANUFACTURER SELECT --------------------------------------------------------- -->
+def local_name(iri):
+    s = str(iri).rsplit("#", 1)[-1].rstrip("/").rsplit("/", 1)[-1]
+    return re.sub(r"([a-z])([A-Z])", r"\1 \2", s).replace("_", " ").replace("-", " ")
 
-      <!-- Two launcher cards -->
-      <div style="display:flex; gap:20px; margin-bottom: 28px; flex-wrap:wrap;">
-
-        <!-- Box 1: Manufacturer -->
-        <div onclick="toggleLauncherPanel('mfgPanel', 'regPanel')"
-             style="flex:1; min-width:220px; background:#fff; border:1px solid #ddd;
-                    border-radius:14px; padding:22px 26px; cursor:pointer; transition:background 0.2s, box-shadow 0.2s;
-                    display:flex; align-items:center; gap:16px; box-shadow:0 2px 8px rgba(0,0,0,0.08);"
-             onmouseover="this.style.boxShadow='0 4px 18px rgba(0,0,0,0.15)'"
-             onmouseout="this.style.boxShadow='0 2px 8px rgba(0,0,0,0.08)'">
-          <div style="width:44px;height:44px;background:#1a1a2e;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/><line x1="12" y1="12" x2="12" y2="16"/><line x1="10" y1="14" x2="14" y2="14"/></svg>
-          </div>
-          <div>
-            <div style="color:#1a1a2e; font-size:16px; font-weight:700; margin-bottom:3px;">Manufacturer</div>
-            <div style="color:#666; font-size:13px;">Select or add a manufacturer to analyze</div>
-          </div>
-        </div>
-
-        <!-- Box 2: Regulation Config -->
-        <div onclick="toggleLauncherPanel('regPanel', 'mfgPanel')"
-             style="flex:1; min-width:220px; background:#fff; border:1px solid #ddd;
-                    border-radius:14px; padding:22px 26px; cursor:pointer; transition:background 0.2s, box-shadow 0.2s;
-                    display:flex; align-items:center; gap:16px; box-shadow:0 2px 8px rgba(0,0,0,0.08);"
-             onmouseover="this.style.boxShadow='0 4px 18px rgba(0,0,0,0.15)'"
-             onmouseout="this.style.boxShadow='0 2px 8px rgba(0,0,0,0.08)'">
-          <div style="width:44px;height:44px;background:#1a1a2e;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93A10 10 0 1 0 4.93 19.07M12 2v2M12 20v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M2 12h2M20 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
-          </div>
-          <div>
-            <div style="color:#1a1a2e; font-size:16px; font-weight:700; margin-bottom:3px;">Regulation Config</div>
-            <div style="color:#666; font-size:13px;">Add regulations or run incremental updates</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Manufacturer Panel -->
-      <div id="mfgPanel" class="panel hidden" style="margin-bottom:24px;">
-        <h3 style="margin-top:0; margin-bottom:16px;">Manufacturer Selection</h3>
-        <label for="manufacturerSelect"><strong>Select Manufacturer:</strong></label>
-        <div class="row" style="margin-top:8px;">
-          <select id="manufacturerSelect"></select>
-          <button id="btnLoad">Classify</button>
-        </div>
-        <div class="muted small" id="countNote" style="margin-top:8px;"></div>
-
-        <hr style="margin:20px 0; border-color:rgba(0,0,0,0.1);">
-
-        <h4 style="margin-top:0; margin-bottom:12px;">Add a Manufacturer</h4>
-        <div class="field">
-          <label for="newName"><strong>Name</strong></label>
-          <input id="newName" type="text" placeholder="e.g., Apple"
-                 style="width:100%; padding:6px 8px; margin-top:4px; border-radius:8px; border:1px solid var(--border);" />
-        </div>
-        <div class="field" style="margin-top: 12px;">
-          <label for="newPolicy"><strong>Policy description</strong></label>
-          <textarea id="newPolicy" rows="4"
-            placeholder="Paste the relevant privacy policy text here"
-            style="width:100%; padding:6px 8px; margin-top:4px; border-radius:8px; border:1px solid var(--border);"></textarea>
-        </div>
-        <div class="field" style="margin-top: 12px;">
-          <label for="pdfFile"><strong>Upload policy PDF (optional)</strong></label>
-          <input id="pdfFile" type="file" accept="application/pdf" style="display:block; margin-top:6px;" />
-          <button id="btnExtractPdf" type="button" style="margin-top:8px;">Extract text from PDF</button>
-          <div id="pdfStatus" class="small muted" style="margin-top: 6px;"></div>
-        </div>
-        <button id="btnAdd" style="margin-top: 12px;">Save Manufacturer</button>
-        <div id="addStatus" class="small muted" style="margin-top: 8px;"></div>
-      </div>
-
-      <!-- Regulation Config Panel -->
-      <div id="regPanel" class="panel hidden" style="margin-bottom:24px;">
-        <h3 style="margin-top:0; margin-bottom:16px;">Regulation Configuration</h3>
-
-        <h4 style="margin-top:0; margin-bottom:10px;">Add a New Regulation</h4>
-        <div class="field">
-          <label><strong>Regulation Name</strong></label>
-          <input type="text" id="newRegName" placeholder="e.g., GDPR Article 32"
-                 style="width:100%; padding:6px 8px; margin-top:4px; border-radius:8px; border:1px solid var(--border);" />
-        </div>
-        <div class="field" style="margin-top:10px;">
-          <label><strong>Regulation Description / Requirements</strong></label>
-          <textarea id="newRegDesc" rows="3" placeholder="Describe the compliance requirements..."
-            style="width:100%; padding:6px 8px; margin-top:4px; border-radius:8px; border:1px solid var(--border);"></textarea>
-        </div>
-        <button style="margin-top:10px;" onclick="alert('Add Regulation handler — wire to your backend endpoint.')">Save Regulation</button>
-
-        <hr style="margin:20px 0; border-color:rgba(0,0,0,0.1);">
-
-        <h4 style="margin-top:0; margin-bottom:10px;">Incremental Regulation Update</h4>
-        <div class="field">
-          <label><strong>Select Regulation to Update</strong></label>
-          <select id="updateRegSelect" style="width:100%; padding:6px 8px; margin-top:4px; border-radius:8px; border:1px solid var(--border);">
-            <option value="">— choose a regulation —</option>
-            <option value="california">California SB-327</option>
-            <option value="oregon">Oregon HB 2395</option>
-            <option value="nistir">NISTIR 8259</option>
-            <option value="plaw">Federal PL 116-207</option>
-          </select>
-        </div>
-        <div class="field" style="margin-top:10px;">
-          <label><strong>Updated / Additional Requirements</strong></label>
-          <textarea id="updateRegDesc" rows="3" placeholder="Paste updated clause or amendment text..."
-            style="width:100%; padding:6px 8px; margin-top:4px; border-radius:8px; border:1px solid var(--border);"></textarea>
-        </div>
-        <button style="margin-top:10px;" onclick="alert('Incremental update handler — wire to your backend endpoint.')">Apply Update</button>
-        <div class="small muted" style="margin-top:8px;">This will re-classify all manufacturers against the updated regulation.</div>
-      </div>
-
-      <!-- Details -->
-      <div id="details" class="details hidden" style="margin-top: 32px;">
-        <h2 id="mName"></h2>
-
-        <h3>Policy Description</h3>
-        <pre id="policy" class="policy"></pre>
-        <button id="togglePolicy" class="small-btn hidden">Read more</button>
-
-        <hr style="margin-top: 20px;margin-bottom: 20px;">
-
-<!-- ---------------------------------------------------------------- COVERAGE --------------------------------------------------------- -->
-
-        <h3 id="lawHeader">Law Coverage</h3>
-        <div style="margin-bottom: 16px;">
-          <label for="stateFilter"><strong>Filter by State:</strong></label>
-          <select id="stateFilter" style="margin-left: 8px; padding: 4px 8px;">
-            <option value="all">All Regulations</option>
-            <option value="california">California</option>
-            <option value="oregon">Oregon</option>
-            <option value="nistir">NISTIR 8259</option>
-            <option value="plaw">Federal PL 116-207</option>
-          </select>
-        </div>
-        <div id="overallCoverage" style="margin-bottom: 16px; padding: 12px; background: #f5f5f5; border-radius: 8px;">
-          <strong><span id="coverageLabel">Overall Coverage</span>: </strong><span id="overallPercent">--</span>%
-        </div>
-
-        <div id="laws" class="cards law-cards"></div>
-
-        <!-- Live compliance charts — below law percentage cards -->
-        <div class="charts-row" id="chartsRow" style="display:none; margin-top:20px;">
-          <div class="chart-box">
-            <h4>Compliant vs Non-Compliant Rules | Bar Chart</h4>
-            <canvas id="barChart"></canvas>
-          </div>
-        </div>
-
-        <!-- Top & Missing classes side by side -->
-        <div class="row two-col">
-          <div class="col">
-            <h3 id="classHeader">Compliant Rules</h3>
-            <div id="classes" class="cards"></div>
-          </div>
-          <div class="col">
-            <h3 id="missingHeader">Non-Compliant Rules</h3>
-            <div id="missingClasses" class="cards"></div>
-          </div>
-        </div>
-        <hr style="margin-top: 20px;margin-bottom: 20px;">
-
-      </div>
-
-    </div><!-- /tab-home -->
-
-
-    <!-- ═══════════════════════════ LAWS TAB ═══════════════════════════ -->
-    <div id="tab-laws" class="page-section">
-
-      <div class="info-panel">
-        <h2>About the Laws</h2>
-        <p>These are the regulations your privacy policies are checked against. Each law sets specific requirements for how manufacturers of connected devices must 
-          protect user data and device security.</p>
-      </div>
-
-      <div class="info-panel">
-        <span class="law-badge">California</span>
-        <h2 style="margin-top:8px;">California SB-327</h2>
-        <p><strong>Effective:</strong> January 1, 2020</p>
-        <p>
-          California SB-327 was the first IoT security law in the United States. It requires any manufacturer of a connected device sold in California to equip the device 
-          with reasonable security features appropriate to its nature and function. The law specifically targets devices that can connect to the internet and collect,
-           transmit, or store user data. A specific requirement here is that manufacturers must ensure devices either come with a unique password per device or require users 
-           to set their own password on first use.
-        </p>
-        <p>The law does not exactly define what "reasonable security" means, giving manufacturers some flexibility, but the password requirement is concrete and enforceable.</p>
-        <a href="https://leginfo.legislature.ca.gov/faces/billCompareClient.xhtml?bill_id=201720180SB327" target="_blank">
-          <span class="info-btn">View full legislation →</span>
-        </a>
-      </div>
-
-      <div class="info-panel">
-        <span class="law-badge">Oregon</span>
-        <h2 style="margin-top:8px;">Oregon HB 2395</h2>
-        <p><strong>Effective:</strong> January 1, 2020</p>
-        <p>
-          Oregon HB 2395 mirrors CA SB-327's approach and extends similar IoT security requirements to the state of Oregon. It 
-          requires manufacturers of internet-connected devices that collect, transmit, or store personal information about users to provide reasonable security standards, including
-          but not limited to providing preprogrammed passwords or opportunity for the user to create their own password during first booting.
-           Like California SB-327, it addresses the risk of devices being compromised due to weak or shared default credentials.
-        </p>
-        <p>The law applies specifically to devices designed and marketed for consumers rather than industrial or enterprise use.</p>
-        <a href="https://olis.oregonlegislature.gov/liz/2019R1/Downloads/MeasureDocument/HB2395" target="_blank">
-          <span class="info-btn">View full legislation →</span>
-        </a>
-      </div>
-
-      <div class="info-panel">
-        <span class="law-badge">Federal</span>
-        <h2 style="margin-top:8px;">Public Law 116-207 — IoT Cybersecurity Improvement Act of 2020</h2>
-        <p><strong>Effective:</strong> December 4, 2020</p>
-        <p>
-          PL 116-207 is a federal law that establishes minimum cybersecurity standards for IoT devices owned or controlled by the U.S. federal government. Rather than applying to all 
-          manufacturers directly, it works by requiring federal agencies to only purchase IoT devices that meet NIST-defined security standards. This creates strong market pressure on
-           manufacturers who want to sell to government buyers.
-        </p>
-        <p>The law requires NIST to publish guidelines for IoT device security, directs agencies to inventory their connected devices, and establishes vulnerability disclosure policies, 
-        structuring a way for researchers to report security flaws without legal risk.</p>
-        <a href="https://www.congress.gov/116/plaws/publ207/PLAW-116publ207.pdf" target="_blank">
-          <span class="info-btn">View full legislation →</span>
-        </a>
-      </div>
-
-      <div class="info-panel">
-        <span class="law-badge">NIST Standard</span>
-        <h2 style="margin-top:8px;">NISTIR 8259 — Foundational Cybersecurity Activities for IoT Device Manufacturers</h2>
-        <p><strong>Published:</strong> May 2020</p>
-        <p>
-          NISTIR 8259 is not a law but a set of standard practices published by the National Institute of Standards and Technology. It describes the cybersecurity activities that IoT
-           device manufacturers should perform before a device is sold and throughout its supported lifetime. The document is widely cited in legislation and procurement requirements as
-            a baseline standard.
-        </p>
-        <p>It covers six core areas: identifying cybersecurity risks related to the device, protecting device security, detecting cybersecurity events, responding to incidents, 
-          recovering from incidents, and communicating with users about security. These map directly to the compliance classes used in this application's analysis.</p>
-        <a href="https://csrc.nist.gov/pubs/ir/8259/final" target="_blank">
-          <span class="info-btn">View full publication →</span>
-        </a>
-      </div>
-
-    </div><!-- /tab-laws -->
-
-
-    <!-- ═══════════════════════════ ABOUT TAB ═══════════════════════════ -->
-    <div id="tab-about" class="page-section">
-
-      <div class="info-panel">
-        <h2>About This Application</h2>
-        <p>The Privacy Policy Compliance Analyzer is a compliance adherence tool that automatically evaluates how well a company's published privacy policy covers 
-          the requirements of major IoT security laws and standards. It uses a combination of machine learning, knowledge graph reasoning, and a 
-          large language model to produce its analysis.</p>
-      </div>
-
-      <div class="info-panel">
-        <h3 style="margin-top:0;">How it works</h3>
-        <p>When you select a manufacturer, the application retrieves their privacy policy text from the knowledge graph and runs it through two 
-          analysis methods simultaneously:</p>
-
-        <div class="about-grid">
-          <div class="about-card">
-            <h4>Sentence-Transformer Semantic Similarity</h4>
-            <p>A BERT-based sentence-transformer model encodes the policy text and each regulatory compliance class into numerical vectors, then measures 
-              how semantically similar they are. This catches coverage even when the exact legal terminology isn't used.</p>
-          </div>
-          <div class="about-card">
-            <h4>SWRL Rule Reasoning</h4>
-            <p>A set of keyword-to-class rules fires against the policy text. If a policy mentions "authentication" or "unique password", the 
-              reasoner infers that the Authentication class is covered. This catches explicit keyword evidence.</p>
-          </div>
-          <div class="about-card">
-            <h4>Hybrid Confidence Tiers</h4>
-            <p>The two methods are combined into a four-tier confidence rating. HIGH means both BERT and SWRL agree. MEDIUM-BERT means only 
-              semantic similarity confirmed it. MEDIUM-SWRL means only keywords matched. NONE means neither method found evidence.</p>
-          </div>
-          <div class="about-card">
-            <h4>SPARQL Validation</h4>
-            <p>A cross-validation step compares BERT's decisions against keyword matching for every class, computing an agreement rate. This 
-              gives a measure of how consistent and reliable the analysis is for each manufacturer.</p>
-          </div>
-        </div>
-      </div>
-
-      <div class="info-panel">
-        <h3 style="margin-top:0;">Knowledge Graph</h3>
-        <p>All manufacturer data, policy text, regulatory class definitions, and law annotations are stored in an OWL ontology. 
-          This is a structured knowledge graph that encodes relationships between manufacturers, laws, and compliance requirements. 
-          The graph is loaded at startup and queried in real time for every analysis. When you add a new manufacturer, they are
-           written directly into this graph.</p>
-      </div>
-
-      <div class="info-panel">
-        <h3 style="margin-top:0;">Privacy Bot</h3>
-        <p>The chatbot on the Home tab is powered by LLaMA 3.3 70B running via the Groq API. The model only has access to 
-          the knowledge graph context built for the selected manufacturer; it cannot browse the internet or access any data outside
-           what is shown in the compliance analysis. Every answer is grounded in the graph.</p>
-      </div>
-
-      <div class="info-panel">
-        <h3 style="margin-top:0;">Coverage score explained</h3>
-        <p>The coverage percentage shown for each law represents what fraction of that law's required compliance classes the manufacturer's
-           policy scores above the similarity threshold. A score of 100% means the policy contains evidence of covering every class 
-           associated with that law. A lower score indicates whats missing, areas the policy does not clearly address.</p>
-        <p>The threshold is set in <code>config.json</code> as <code>coverage_threshold</code>. The default is 0.27, meaning a class 
-          needs at least a 27% similarity score to count as covered.</p>
-      </div>
-
-    </div><!-- /tab-about -->
-
-
-  </div><!-- /container -->
-
-    <script>
-    let historychart = null; 
-
-      // ── Tab switching ──
-          function showTab(name, btn) {
-      document.querySelectorAll('.page-section').forEach(s => s.classList.remove('active'));
-      document.querySelectorAll('.ribbon-tab').forEach(b => b.classList.remove('active'));
-
-      document.getElementById('tab-' + name).classList.add('active');
-      btn.classList.add('active');
-    }
-
-
-
-
-
-      // ── Home button ──
-      function goHome() {
-        document.querySelectorAll('.page-section').forEach(s => s.classList.remove('active'));
-        document.querySelectorAll('.ribbon-tab').forEach(b => b.classList.remove('active'));
-        document.getElementById('tab-home').classList.add('active');
-        document.getElementById('tab-btn-home').classList.add('active');
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-      }
-
-      function truncateText(str, maxLen) {
-  if (!str) return "";
-  if (str.length <= maxLen) return str;
-  return str.slice(0, maxLen) + "...";
+# =============================================================================
+# BUILD REGULATORY CLASS CORPUS (directly from KG annotations)
+# =============================================================================
+_LABEL_FIXES = {
+    "iot device": "IoT Device", "io tdevice": "IoT Device",
+    "iotdevice": "IoT Device", "network interface": "Network Interface",
 }
 
-      function el(id){ return document.getElementById(id); }
+def _class_label(c):
+    lbls = [str(o) for o in g.objects(c, RDFS.label)]
+    raw = lbls[0] if lbls else local_name(str(c))
+    return _LABEL_FIXES.get(raw.lower().strip(), raw)
 
-      let policyFullText = "";
-      let policyTruncatedText = "";
-      let policyExpanded = false;
 
-      const CLASS_THRESHOLD = 0.0; // Matches backend COVERAGE_THRESHOLD
+#!!!! searches for hasLaw annots
+def _law_ids_for_class(c):
+    ids = set()
+    for pred in LAW_PREDS:
+        for obj in g.objects(c, pred):
+            txt = str(obj).lower()
+            for law in LAWS:
+                if any(kw.lower() in txt for kw in law.get("keywords", [])):
+                    ids.add(law["id"])
+    return ids
 
-      function makeTruncated(text, maxLen) {
-        if (!text) return "";
-        if (text.length <= maxLen) return text;
-        return text.slice(0, maxLen) + "...";
-      }
+def _annotation(c):
+    parts = []
+    for pred in LAW_PREDS:
+        for obj in g.objects(c, pred):
+            parts.append(str(obj).strip())
+    return " | ".join(parts)
 
-      function truncateText(str, maxLen) {
-        if (!str) return "";
-        if (str.length <= maxLen) return str;
-        return str.slice(0, maxLen) + "...";
-      }
+# Build parallel lists
+class_iris, class_labels, class_texts = [], [], []
+class_descs, class_to_laws = {}, {}
 
-      function statusFromCoverage(pct, numAbove, numClasses) {
-        if (!numClasses || pct === 0 || numAbove === 0) return "Missing";
-        if (pct < 40) return "Partially";
-        if (pct < 80) return "Mostly";
-        return "Fully";
-      }
+for c in g.subjects(RDF.type, OWL.Class):
+    if not isinstance(c, URIRef):
+        continue
+    law_ids = _law_ids_for_class(c)
+    if not law_ids:
+        continue
+    label   = _class_label(c)
+    comment = " ".join(str(o) for o in g.objects(c, RDFS.comment)).strip()
+    ann     = _annotation(c)
+    class_iris.append(str(c))
+    class_labels.append(label)
+    class_texts.append(f"{label} {comment} {ann} {local_name(str(c))}")
+    class_descs[str(c)]   = comment or ann[:200]
+    class_to_laws[str(c)] = law_ids
 
-      function buildLawSections(desc, stateFilter) {
-  if (!desc) {
+# Deduplicate by label
+seen, keep = set(), []
+for i, lbl in enumerate(class_labels):
+    if lbl.lower() not in seen:
+        seen.add(lbl.lower()); keep.append(i)
+class_iris    = [class_iris[i]   for i in keep]
+class_labels  = [class_labels[i] for i in keep]
+class_texts   = [class_texts[i]  for i in keep]
+class_descs   = {class_iris[j]: class_descs[class_iris[keep[j]]] for j in range(len(keep))}
+class_to_laws = {class_iris[j]: class_to_laws[class_iris[keep[j]]] for j in range(len(keep))}
+
+if not class_iris:
+    raise SystemExit("No regulatory classes found in ontology.")
+
+law_to_class_idxs = {law["id"]: [] for law in LAWS}
+for idx, c_iri in enumerate(class_iris):
+    for lid in class_to_laws[c_iri]:
+        if lid in law_to_class_idxs:
+            law_to_class_idxs[lid].append(idx)
+
+for law in LAWS:
+    print(f"[init] {law['id']}: {len(law_to_class_idxs[law['id']])} classes")
+
+print(f"[init] Encoding {len(class_texts)} classes with BERT...")
+_bert = SentenceTransformer(EMBED_MODEL)
+class_embeddings = _bert.encode(class_texts, convert_to_numpy=True, normalize_embeddings=True)
+
+# =============================================================================
+# LOAD MANUFACTURERS
+# =============================================================================
+_ALLOWED = {"ADT","Emerson","Fitbit",
+            "Panasonic","Ring","Vivint"}
+_NAME_FIX = {"adt":"ADT"}
+
+def clean_name(n):
+    return _NAME_FIX.get(n.lower().strip(), n.title())
+
+manufacturers = []
+for row in g.query(f"SELECT DISTINCT ?i WHERE {{ ?i a ?t . ?t <{RDFS.subClassOf}>* <{MFG_CLS}> . }}"):
+    inst = row.i
+    lbls = [str(o) for o in g.objects(inst, RDFS.label)]
+    name = clean_name(lbls[0] if lbls else local_name(str(inst)))
+    pols = [str(o) for o in g.objects(inst, POLICY_PROP) if isinstance(o, Literal)]
+    pol  = max(pols, key=len) if pols else ""
+    added = any(True for _ in g.objects(inst, USER_ADDED_PROP))
+    manufacturers.append({"iri": str(inst), "name": name, "policy": pol, "user_added": added})
+
+manufacturers.sort(key=lambda m: m["name"].lower())
+_fil = [m for m in manufacturers if m["user_added"] or any(a.lower() in m["name"].lower() for a in _ALLOWED)]
+manufacturers = _fil if _fil else manufacturers
+print(f"[init] {len(manufacturers)} manufacturers")
+
+# =============================================================================
+# GROQ + WGRADER
+# =============================================================================
+groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY",
+    "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"))
+
+wgrader.init_grader(
+    groq_client=groq_client, manufacturers=manufacturers,
+    class_iris=class_iris, class_labels=class_labels,
+    class_descs=class_descs, class_to_laws=class_to_laws,
+    law_to_class_idxs=law_to_class_idxs, LAWS=LAWS,
+    COVERAGE_THRESHOLD=THRESHOLD,
+    rank_classes_for_policy=lambda p, s="all": ([], None),
+    state_detector=state_detector,
+)
+
+# =============================================================================
+# CORE SCORING  —  single function used by BOTH /detail AND /chat
+# =============================================================================
+def _active_laws(state):
+    if state == "all":
+        return LAWS
+
+    # Direct single-law filters used by the frontend for NISTIR and Public Law.
+    # This prevents a NISTIR-only question from being expanded to every federal law.
+    direct_law_ids = {l["id"] for l in LAWS}
+    if state in direct_law_ids:
+        return [l for l in LAWS if l["id"] == state]
+
+    ids = {l["id"] for l in state_detector.applicable_laws([state], LAWS)}
+    return [l for l in LAWS if l["id"] in ids]
+
+
+def compute_scores(policy, state):
+    """
+    Returns dict:
+      sims         np.ndarray | None
+      law_coverage list[{id, label, coverage_percent, num_classes, num_above}]
+      overall      float
+      covered      list[{class_label, law_labels, bert_sim, desc, annotation}]
+      missing      list[{class_label, law_label, bert_sim, gap, desc, annotation}]
+      weighted     dict | None  (from wgrader cache)
+    """
+    if not (policy or "").strip():
+        return {"sims": None, "law_coverage": [], "overall": 0.0,
+                "covered": [], "missing": [], "weighted": None}
+
+    q_emb = _bert.encode([policy], convert_to_numpy=True, normalize_embeddings=True)[0]
+    sims  = np.dot(class_embeddings, q_emb)
+
+    active     = _active_laws(state)
+    active_ids = {l["id"] for l in active}
+
+    # Flat coverage per law
+    law_coverage, total_cls, total_above = [], 0, 0
+    for law in active:
+        lid  = law["id"]
+        idxs = law_to_class_idxs.get(lid, [])
+        if not idxs:
+            law_coverage.append({"id": lid, "label": law["label"],
+                                  "coverage_percent": 0.0, "num_classes": 0, "num_above": 0})
+            continue
+        above = sum(1 for i in idxs if float(sims[i]) >= THRESHOLD)
+        pct   = round(100.0 * above / len(idxs), 2)
+        law_coverage.append({"id": lid, "label": law["label"],
+                              "coverage_percent": pct, "num_classes": len(idxs), "num_above": above})
+        total_cls += len(idxs); total_above += above
+    overall = round(100.0 * total_above / total_cls, 2) if total_cls else 0.0
+
+    # Covered classes
+    covered = []
+    for idx, sim in enumerate(sims):
+        sim = float(sim)
+        if sim < THRESHOLD:
+            continue
+        c_iri = class_iris[idx]
+        law_ids = class_to_laws.get(c_iri, set()) & active_ids
+        if not law_ids:
+            continue
+        covered.append({
+            "class_label": class_labels[idx],
+            "law_labels":  [l["label"] for l in LAWS if l["id"] in law_ids],
+            "bert_sim":    round(sim, 4),
+            "desc":        class_descs.get(c_iri, ""),
+            "annotation":  _annotation(URIRef(c_iri)),
+        })
+    covered.sort(key=lambda x: x["bert_sim"], reverse=True)
+
+    # Missing classes — pull annotation text per law from KG
+    missing = []
+    for law in active:
+        lid = law["id"]
+        for idx in law_to_class_idxs.get(lid, []):
+            sim = float(sims[idx])
+            if sim >= THRESHOLD:
+                continue
+            c_iri = class_iris[idx]
+            node  = URIRef(c_iri)
+            ann_parts = []
+            for pred in LAW_PREDS:
+                for obj in g.objects(node, pred):
+                    raw = str(obj)
+                    if any(kw.lower() in raw.lower() for kw in law.get("keywords", [])):
+                        ann_parts.append(raw.strip())
+                        break
+            missing.append({
+                "class_label": class_labels[idx],
+                "law_label":   law["label"],
+                "bert_sim":    round(sim, 4),
+                "gap":         round(THRESHOLD - sim, 4),
+                "desc":        class_descs.get(c_iri, ""),
+                "annotation":  " | ".join(ann_parts[:2]),
+            })
+    missing.sort(key=lambda x: x["gap"], reverse=True)
+
+    # Weighted score from cache (do NOT run agents here; use /weighted_grade_trigger)
+    weighted = None
+    try:
+        from step3_agentic_weighted_grader import (_cache_key, _weight_cache,
+                                                   _get_active_laws, agent3_weighted_grader)
+        al = _get_active_laws(state)
+        ck = _cache_key([l["id"] for l in al])
+        if ck in _weight_cache:
+            weighted = agent3_weighted_grader(
+                {"name": "?", "policy": policy}, sims, _weight_cache[ck], al, state)
+    except Exception:
+        pass
+
+    return {"sims": sims, "law_coverage": law_coverage, "overall": overall,
+            "covered": covered, "missing": missing, "weighted": weighted}
+
+
+# =============================================================================
+# CHAT CONTEXT — built from compute_scores(), reads KG directly
+# =============================================================================
+def _trim(text, n=260):
+    text = re.sub(r"\s+", " ", (text or "")).strip()
+    return text if len(text) <= n else text[:n].rstrip() + "..."
+
+
+def _law_annotation_for_class(c_iri, law):
+    """Return only the rdfs:hasLaw-style annotation text that belongs to one law."""
+    node = URIRef(c_iri)
+    hits = []
+    keywords = [law.get("label", ""), law.get("id", "").replace("_", " ")] + law.get("keywords", [])
+    keywords = [k.lower() for k in keywords if k]
+    for pred in LAW_PREDS:
+        for obj in g.objects(node, pred):
+            raw = str(obj).strip()
+            low = raw.lower()
+            if any(k in low for k in keywords):
+                hits.append(raw)
+    return " | ".join(dict.fromkeys(hits))
+
+
+def _section_hint(text):
+    """Best-effort section/reference extraction from KG law annotation text."""
+    if not text:
+        return "No section identifier found in KG annotation"
+    patterns = [
+        r"(?:section|sec\.|§)\s*[0-9A-Za-z_.:-]+",
+        r"ORS\s*[0-9A-Za-z_.:-]+",
+        r"Cal\.?\s+Civ\.?\s+Code\s*§?\s*[0-9A-Za-z_.:-]+",
+        r"NISTIR\s*8259(?:A)?",
+        r"PL\s*116-207|Public Law\s*116-207",
+        r"HB\s*2395|SB-327|HB\s*4",
+    ]
+    for pat in patterns:
+        m = re.search(pat, text, flags=re.I)
+        if m:
+            return m.group(0)
+    return "No section identifier found in KG annotation"
+
+#!!! collects annots from requested law from the user 
+def law_rules_from_kg(laws=None):
+    """Build a clean law -> rule/class list directly from rdfs:hasLaw annotations."""
+    laws = laws or LAWS
+    out = {}
+    for law in laws:
+        rules = []
+        for idx in law_to_class_idxs.get(law["id"], []):
+            c_iri = class_iris[idx]
+            ann = _law_annotation_for_class(c_iri, law)
+            rules.append({
+                "class_label": class_labels[idx],
+                "section_hint": _section_hint(ann),
+                "annotation": ann or class_descs.get(c_iri, ""),
+            })
+        # de-duplicate by class label while preserving order
+        seen = set()
+        clean = []
+        for r in rules:
+            key = r["class_label"].lower()
+            if key not in seen:
+                seen.add(key)
+                clean.append(r)
+        out[law["id"]] = {"id": law["id"], "label": law["label"], "rules": clean}
+    return out
+
+
+def law_comparison_from_kg(laws=None):
+    """Return Law A has X / Law B has Y / common Z based on KG law annotations."""
+    rules_by_law = law_rules_from_kg(laws)
+    label_to_laws = {}
+    for lid, law_data in rules_by_law.items():
+        for r in law_data["rules"]:
+            label_to_laws.setdefault(r["class_label"], set()).add(lid)
+
+    common = sorted([lbl for lbl, lids in label_to_laws.items() if len(lids) >= 2])
+    unique = {}
+    for lid, law_data in rules_by_law.items():
+        unique[lid] = sorted([
+            r["class_label"] for r in law_data["rules"]
+            if len(label_to_laws.get(r["class_label"], set())) == 1
+        ])
+
+    return {"rules_by_law": rules_by_law, "common_rules": common, "unique_rules": unique}
+
+
+def _explicit_laws_from_question(question):
+    """Return only laws explicitly named/aliased in the user's question."""
+    q = (question or "").lower()
+    wanted = []
+    for law in LAWS:
+        if law.get("id", "").lower() in q or law.get("label", "").lower() in q:
+            wanted.append(law)
+            continue
+        aliases = {
+            "OR_HB_2395": ["oregon", "hb 2395", "oregon hb"],
+            "CA_SB_327": ["california", "sb-327", "sb 327"],
+            "TX_HB_4": ["texas", "hb 4", "tx hb"],
+            "IoT_Cyber_Act_2020": ["iot cybersecurity", "iot cybersecurity improvement", "pl 116-207", "pl 116 207", "public law", "plaw", "federal"],
+            "NISTIR_8259": ["nist", "nistir", "8259"],
+        }.get(law.get("id", ""), [])
+        if any(a in q for a in aliases):
+            wanted.append(law)
+    return wanted
+
+
+def _wanted_laws_from_question(question, state="all"):
+    """Keep chat context small by only sending laws the user asked about."""
+    explicit = _explicit_laws_from_question(question)
+    if explicit:
+        return explicit
+    if state and state != "all":
+        return _active_laws(state)
+    return LAWS
+
+#!!! guides what user is asking for (not llm due to token calls
+def _question_intent(question):
+    q = (question or "").lower()
     return {
-      shortHtml: '<div class="law-desc">(no description)</div>',
-      fullHtml: '<div class="law-desc">(no description)</div>'
-    };
-  }
-
-  const pieces = desc.split(/(?<=[.!?])\s+|[\n\r]+|;+/, -1);
-  const oreSegs = [];
-  const caSegs  = [];
-  const niSegs  = [];
-  const plSegs  = [];
-
-  pieces.forEach(p => {
-    const pl = p.toLowerCase().trim();
-    if (!pl) return;
-
-    const isOre = pl.includes("oregon hb 2395") || pl.includes("hb 2395") || pl.includes("oregon");
-    const isCa  = pl.includes("california sb-327") || pl.includes("sb-327") || pl.includes("california");
-    const isNi  = pl.includes("nistir 8259") || pl.includes("8259") || pl.includes("nist");
-    const isPl  = pl.includes("PL 116-207") || pl.includes("116-207") || pl.includes("federal");
-
-    if (isOre) oreSegs.push(p.trim());
-    if (isCa) caSegs.push(p.trim());
-    if (isNi) niSegs.push(p.trim());
-    if (isPl) plSegs.push(p.trim());
-  });
-
-  let shortParts = [];
-  let fullParts  = [];
-
-  const filter = (stateFilter || 'all').toLowerCase();
-  
-  if ((filter === 'all' || filter === 'oregon') && oreSegs.length) {
-    const joined = oreSegs.join(' ');
-    shortParts.push(`<div class="law-segment"><strong>Oregon HB 2395:</strong> ${truncateText(joined, 150)}</div>`);
-    fullParts.push(`<div class="law-segment"><strong>Oregon HB 2395:</strong> ${joined}</div>`);
-  }
-
-  if ((filter === 'all' || filter === 'california') && caSegs.length) {
-    const joined = caSegs.join(' ');
-    shortParts.push(`<div class="law-segment"><strong>California SB-327:</strong> ${truncateText(joined, 150)}</div>`);
-    fullParts.push(`<div class="law-segment"><strong>California SB-327:</strong> ${joined}</div>`);
-  }
-
-  if ((filter === 'all' || filter === 'nistir') && niSegs.length) {
-    const joined = niSegs.join(' ');
-    shortParts.push(`<div class="law-segment"><strong>NISTIR 8259:</strong> ${truncateText(joined, 150)}</div>`);
-    fullParts.push(`<div class="law-segment"><strong>NISTIR 8259:</strong> ${joined}</div>`);
-  }
-
-  if ((filter === 'all' || filter === 'plaw') && plSegs.length) {
-    const joined = plSegs.join(' ');
-    shortParts.push(`<div class="law-segment"><strong>Public Law 116-207:</strong> ${truncateText(joined, 150)}</div>`);
-    fullParts.push(`<div class="law-segment"><strong>Public Law 116-207:</strong> ${joined}</div>`);
-  }
-
-  if (shortParts.length === 0) {
-    const fallback = truncateText(desc, 300);
-    return {
-      shortHtml: `<div class="law-desc">${fallback}</div>`,
-      fullHtml: `<div class="law-desc">${desc}</div>`
-    };
-  }
-
-  return {
-    shortHtml: shortParts.join(''),
-    fullHtml: fullParts.join('')
-  };
-}
-
-      async function loadDropdown() {
-        const res = await fetch('/list');
-        const items = await res.json();
-        console.log('Manufacturers loaded:', items);
-        const sel = el('manufacturerSelect');
-        sel.innerHTML = '';
-
-        if (!items.length){
-          const opt = document.createElement('option');
-          opt.textContent = '(No manufacturers found)';
-          opt.value = '';
-          sel.appendChild(opt);
-          el('countNote').textContent = '';
-          return;
-        }
-
-        items.forEach(m => {
-          const opt = document.createElement('option');
-          opt.value = m.iri;
-          opt.textContent = m.name;
-          sel.appendChild(opt);
-        });
-
-        el('countNote').textContent = `${items.length} total manufacturer(s)`;
-        sel.value = items[0].iri;
-        loadDetail();
-      }
-
-      async function loadDetail() {
-        const sel = el('manufacturerSelect');
-        const iri = sel.value;
-        if (!iri) return;
-
-        const stateFilter = el('stateFilter').value;
-
-        const res = await fetch('/detail?iri=' + encodeURIComponent(iri) + '&state=' + encodeURIComponent(stateFilter));
-        const data = await res.json();
-
-        el('details').classList.remove('hidden');
-        el('mName').textContent = data.name || '(no label)';
-
-        policyFullText = data.policy || '(no policy_description found)';
-        policyTruncatedText = makeTruncated(policyFullText, 500);
-        policyExpanded = false;
-
-        const policyEl = el('policy');
-        const toggleBtn = el('togglePolicy');
-
-        if (policyFullText.length > 500) {
-        policyEl.textContent = policyTruncatedText;
-        policyEl.style.maxHeight = '150px';
-        policyEl.style.overflowY = 'hidden';
-        toggleBtn.classList.remove('hidden');
-        toggleBtn.textContent = "Read more";
-          } else {
-          policyEl.textContent = policyFullText;
-          toggleBtn.classList.add('hidden');
-          }
-
-        const lawCoverage = data.law_coverage || [];
-        console.log('Law Coverage Data:', lawCoverage);
-        console.log('State Filter:', stateFilter);
-        let overallPct = 0;
-        let coverageLabel = 'Overall Coverage';
-        
-        overallPct = data.overall || 0;
-        
-        if (stateFilter === 'all') {
-          coverageLabel = 'Overall Coverage';
-        } else if (stateFilter === 'california') {
-          coverageLabel = 'California Legislature Coverage';
-        } else if (stateFilter === 'oregon') {
-          coverageLabel = 'Oregon Legislature Coverage';
-        } else if (stateFilter === 'nistir') {
-          coverageLabel = 'NISTIR Standard Coverage';
-        } else if (stateFilter === 'plaw') {
-          coverageLabel = 'Federal Public Law 116-207 Coverage';
-        }
-        
-        console.log('Using overall from backend:', overallPct);
-
-        el('coverageLabel').textContent = coverageLabel;
-        el('overallPercent').textContent = overallPct.toFixed(1);
-
-        const lawsDiv = el('laws');
-        lawsDiv.innerHTML = '';
-
-        lawCoverage.forEach(law => {
-          const pct = law.coverage_percent || 0;
-          const status = statusFromCoverage(pct, law.num_above, law.num_classes);
-
-          const card = document.createElement('div');
-          card.className = 'card';
-          card.innerHTML = `
-            <div class="card-title">
-              <span class="law-percent">${pct.toFixed(1)}%</span>
-              <span class="law-label-text">${law.label}</span>
-            </div>
-            <div class="chip">
-              <strong>Status:</strong>&nbsp;${status}
-            </div>
-            <div class="chip">
-              <strong>Covered:</strong>&nbsp;${law.num_above} / ${law.num_classes} Rules
-            </div>
-          `;
-          lawsDiv.appendChild(card);
-        });
-
-        // Render live charts from law coverage data
-        renderLiveCharts(lawCoverage);
-
-        if (stateFilter !== 'all') {
-          const classesDiv = el('classes');
-          const classHeader = el('classHeader');
-          classesDiv.innerHTML = '';
-
-          const topClasses = data.covered || [];
-          const INITIAL_COMPLIANT_DISPLAY = 5;
-
-          if (!topClasses.length) {
-            classHeader.style.display = '';
-            classesDiv.innerHTML = '<p class="muted small">No compliant rules found.</p>';
-          } else {
-            classHeader.style.display = '';
-            
-            topClasses.forEach((cls, index) => {
-              const desc = cls.desc || cls.annotation || "";
-              const { shortHtml, fullHtml } = buildLawSections(desc, stateFilter);
-
-              const card = document.createElement('div');
-              card.className = 'card';
-              
-              if (index >= INITIAL_COMPLIANT_DISPLAY) {
-                card.classList.add('hidden');
-                card.classList.add('extra-compliant-card');
-              }
-              
-              card.innerHTML = `
-  <div class="card-title">
-    ${cls.class_label}
-    ${cls.hybrid ? `
-      <span style="
-        font-size:11px;
-        padding:2px 7px;
-        border-radius:10px;
-        margin-left:8px;
-        font-weight:500;
-        background:${cls.hybrid.tier === 1 ? '#d4edda' : cls.hybrid.tier === 2 ? '#fff3cd' : '#cce5ff'};
-        color:${cls.hybrid.tier === 1 ? '#155724' : cls.hybrid.tier === 2 ? '#856404' : '#004085'};
-      ">${cls.hybrid.label}</span>
-    ` : ''}
-  </div>
-              <div class="small muted class-desc-short">
-                ${shortHtml}
-              </div>
-              <button class="small-btn linkish class-desc-toggle">Read more</button>
-              <div class="small muted class-desc-full hidden">
-                ${fullHtml}
-              </div>
-            `;
-
-              const shortDiv = card.querySelector('.class-desc-short');
-              const fullDiv = card.querySelector('.class-desc-full');
-              const btn = card.querySelector('.class-desc-toggle');
-
-              if (shortHtml.trim() === fullHtml.trim()) {
-                btn.classList.add('hidden');
-              } else {
-                btn.addEventListener('click', () => {
-                  const showingFull = !fullDiv.classList.contains('hidden');
-                  if (showingFull) {
-                    fullDiv.classList.add('hidden');
-                    shortDiv.classList.remove('hidden');
-                    btn.textContent = 'Read more';
-                  } else {
-                    fullDiv.classList.remove('hidden');
-                    shortDiv.classList.add('hidden');
-                    btn.textContent = 'Show less';
-                  }
-                });
-              }
-
-              classesDiv.appendChild(card);
-            });
-
-            if (topClasses.length > INITIAL_COMPLIANT_DISPLAY) {
-              const showMoreBtn = document.createElement('button');
-              showMoreBtn.className = 'show-more-btn';
-              showMoreBtn.textContent = `Show ${topClasses.length - INITIAL_COMPLIANT_DISPLAY} more compliant rules`;
-              showMoreBtn.id = 'showMoreCompliant';
-              
-              showMoreBtn.addEventListener('click', () => {
-                const hiddenCards = classesDiv.querySelectorAll('.extra-compliant-card.hidden');
-                const isExpanded = hiddenCards.length === 0;
-                
-                if (isExpanded) {
-                  const extraCards = classesDiv.querySelectorAll('.extra-compliant-card');
-                  extraCards.forEach(card => card.classList.add('hidden'));
-                  showMoreBtn.textContent = `Show ${topClasses.length - INITIAL_COMPLIANT_DISPLAY} more compliant rules`;
-                } else {
-                  hiddenCards.forEach(card => card.classList.remove('hidden'));
-                  showMoreBtn.textContent = 'Show less';
-                }
-              });
-              
-              classesDiv.appendChild(showMoreBtn);
-            }
-          }
-
-          const missingDiv = el('missingClasses');
-          const missingHeader = el('missingHeader');
-          missingDiv.innerHTML = '';
-
-          const rawMissing = data.missing || [];
-
-          const missingByClass = new Map();
-          rawMissing.forEach(mc => {
-            const key = mc.class_label;
-            if (!missingByClass.has(key)) {
-              missingByClass.set(key, mc);
-            }
-          });
-
-          const missingClasses = Array.from(missingByClass.values());
-          const INITIAL_MISSING_DISPLAY = 5;
-
-          if (!missingClasses.length) {
-            missingHeader.style.display = '';
-            missingDiv.innerHTML = '<p class="muted small">There are no non-compliant issues with this policy.</p>';
-          } else {
-            missingHeader.style.display = '';
-            missingDiv.style.display = '';
-            
-            missingClasses.forEach((mc, index) => {
-              const desc = mc.desc || mc.annotation || "";
-              const { shortHtml, fullHtml } = buildLawSections(desc, stateFilter);
-
-              const card = document.createElement('div');
-              card.className = 'card';
-              
-              if (index >= INITIAL_MISSING_DISPLAY) {
-                card.classList.add('hidden');
-                card.classList.add('extra-missing-card');
-              }
-              
-              card.innerHTML = `
-              <div class="card-title">${mc.class_label}</div>
-              <div class="small muted class-desc-short">
-                ${shortHtml}
-              </div>
-              <div class="small muted class-desc-full hidden">
-                ${fullHtml}
-              </div>
-              <button class="small-btn linkish class-desc-toggle">Read more</button>
-              <div class="chip">
-                <strong>Law:</strong>&nbsp;${mc.law_label || mc.law_id || ''}
-              </div>
-            `;
-
-              const shortDiv = card.querySelector('.class-desc-short');
-              const fullDiv = card.querySelector('.class-desc-full');
-              const btn = card.querySelector('.class-desc-toggle');
-
-              if (shortHtml.trim() === fullHtml.trim()) {
-                btn.classList.add('hidden');
-              } else {
-                btn.addEventListener('click', () => {
-                  const showingFull = !fullDiv.classList.contains('hidden');
-                  if (showingFull) {
-                    fullDiv.classList.add('hidden');
-                    shortDiv.classList.remove('hidden');
-                    btn.textContent = 'Read more';
-                  } else {
-                    fullDiv.classList.remove('hidden');
-                    shortDiv.classList.add('hidden');
-                    btn.textContent = 'Show less';
-                  }
-                });
-              }
-
-              missingDiv.appendChild(card);
-            });
-
-            if (missingClasses.length > INITIAL_MISSING_DISPLAY) {
-              const showMoreBtn = document.createElement('button');
-              showMoreBtn.className = 'show-more-btn';
-              showMoreBtn.textContent = `Show ${missingClasses.length - INITIAL_MISSING_DISPLAY} more non-compliant rules`;
-              showMoreBtn.id = 'showMoreMissing';
-              
-              showMoreBtn.addEventListener('click', () => {
-                const hiddenCards = missingDiv.querySelectorAll('.extra-missing-card.hidden');
-                const isExpanded = hiddenCards.length === 0;
-                
-                if (isExpanded) {
-                  const extraCards = missingDiv.querySelectorAll('.extra-missing-card');
-                  extraCards.forEach(card => card.classList.add('hidden'));
-                  showMoreBtn.textContent = `Show ${missingClasses.length - INITIAL_MISSING_DISPLAY} more non-compliant rules`;
-                } else {
-                  hiddenCards.forEach(card => card.classList.remove('hidden'));
-                  showMoreBtn.textContent = 'Show less';
-                }
-              });
-              
-              missingDiv.appendChild(showMoreBtn);
-            }
-          }
-        } else {
-          el('classes').innerHTML = '';
-          el('missingClasses').innerHTML = '';
-          el('classHeader').style.display = 'none';
-          el('missingHeader').style.display = 'none';
-        }
-      }
-
-      async function addManufacturer() {
-        const nameInput = el('newName');
-        const policyInput = el('newPolicy');
-        const statusEl = el('addStatus');
-
-        if (!nameInput || !policyInput || !statusEl) {
-          return;
-        }
-
-        const name = nameInput.value.trim();
-        const policy = policyInput.value.trim();
-        statusEl.textContent = "";
-
-        if (!name || !policy) {
-          statusEl.textContent = "Please enter both a name and a policy description.";
-          return;
-        }
-
-        try {
-          const res = await fetch("/add_manufacturer", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name, policy })
-          });
-          const data = await res.json();
-
-          if (!res.ok) {
-            statusEl.textContent = data.error || "Error adding manufacturer.";
-            return;
-          }
-
-          statusEl.textContent = `${data.name} added successfully.`;
-          nameInput.value = "";
-          policyInput.value = "";
-          await loadDropdown();
-
-        } catch (err) {
-          console.error(err);
-          statusEl.textContent = "Network/server error adding manufacturer.";
-        }
-      }
-
-      async function extractPdfToPolicy() {
-        const fileInput = el('pdfFile');
-        const statusEl = el('pdfStatus');
-        const policyBox = el('newPolicy');
-
-        statusEl.textContent = "";
-
-        if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
-          statusEl.textContent = "Please choose a PDF file first.";
-          return;
-        }
-
-        const file = fileInput.files[0];
-        const formData = new FormData();
-        formData.append("file", file);
-
-        try {
-          statusEl.textContent = "Extracting text...";
-          const res = await fetch("/extract_pdf", {
-            method: "POST",
-            body: formData
-          });
-
-          const data = await res.json();
-
-          if (!res.ok) {
-            statusEl.textContent = data.error || "Error extracting PDF text.";
-            return;
-          }
-
-          if (data.error && !data.text) {
-            statusEl.textContent = data.error;
-            return;
-          }
-
-          const extracted = (data.text || "").trim();
-          if (!extracted) {
-            statusEl.textContent = "No text extracted.";
-            return;
-          }
-
-          policyBox.value = extracted;
-          statusEl.textContent = `Extracted ${extracted.length.toLocaleString()} characters into the policy box.`;
-        } catch (err) {
-          console.error(err);
-          statusEl.textContent = "Network/server error extracting PDF.";
-        }
-      }
-
-      el('togglePolicy').onclick = function () {
-        const policyEl = el('policy');
-        const toggleBtn = el('togglePolicy');
-
-        if (!policyExpanded) {
-          policyEl.textContent = policyFullText;
-          policyEl.style.overflow = 'auto';
-          toggleBtn.textContent = "Show less";
-          policyExpanded = true;
-        } else {
-          policyEl.textContent = policyTruncatedText;
-          policyEl.style.overflow = 'hidden';
-          toggleBtn.textContent = "Read more";
-          policyExpanded = false;
-        }
-      };
-
-      function toggleLauncherPanel(showId, hideId) {
-        const show = document.getElementById(showId);
-        const hide = document.getElementById(hideId);
-        const isOpen = !show.classList.contains('hidden');
-        hide.classList.add('hidden');
-        if (isOpen) {
-          show.classList.add('hidden');
-        } else {
-          show.classList.remove('hidden');
-        }
-      }
-
-      el('btnLoad').onclick = loadDetail;
-
-      let barChartInstance   = null;
-
-      function renderLiveCharts(lawCoverage) {
-        const row = el('chartsRow');
-        if (!lawCoverage || !lawCoverage.length) {
-          if (row) row.style.display = 'none';
-          return;
-        }
-        if (row) row.style.display = '';
-
-        const labels  = lawCoverage.map(l => l.label);
-        const covered = lawCoverage.map(l => l.num_above || 0);
-        const gaps    = lawCoverage.map(l => (l.num_classes || 0) - (l.num_above || 0));
-
-        // ── Bar chart ──
-        const barCanvas = el('barChart');
-        if (barChartInstance) { barChartInstance.destroy(); barChartInstance = null; }
-        barChartInstance = new Chart(barCanvas, {
-          type: 'bar',
-          data: {
-            labels: labels,
-            datasets: [
-              {
-                label: 'Compliant',
-                data: covered,
-                backgroundColor: 'rgba(89,161,79,0.8)',
-                borderColor: 'rgba(89,161,79,1)',
-                borderWidth: 1,
-                borderRadius: 4
-              },
-              {
-                label: 'Gap',
-                data: gaps,
-                backgroundColor: 'rgba(225,87,89,0.75)',
-                borderColor: 'rgba(225,87,89,1)',
-                borderWidth: 1,
-                borderRadius: 4
-              }
-            ]
-          },
-          options: {
-            responsive: true,
-            plugins: {
-              legend: { position: 'top', labels: { font: { size: 12 }, color: '#333' } }
-            },
-            scales: {
-              x: { stacked: false, ticks: { color: '#555', font: { size: 11 } }, grid: { display: false } },
-              y: { beginAtZero: true, ticks: { color: '#555', stepSize: 1 }, grid: { color: '#eee' },
-                   title: { display: true, text: 'Rules', color: '#555', font: { size: 11 } } }
-            }
-          }
-        });
-      }
-
-      el('btnLoad').onclick = loadDetail;
-      el('manufacturerSelect').addEventListener('change', loadDetail);
-      el('btnAdd').onclick = addManufacturer;
-      el('btnExtractPdf').onclick = extractPdfToPolicy;
-      el('stateFilter').addEventListener('change', loadDetail);
-
-      loadDropdown();
-
-      // Dark mode toggle
-      const darkModeToggle = el('darkModeToggle');
-      const body = document.body;
-
-      if (localStorage.getItem('darkMode') === 'enabled') {
-        body.classList.add('dark-mode');
-        darkModeToggle.textContent = 'Light';
-      }
-
-      darkModeToggle.onclick = function() {
-        body.classList.toggle('dark-mode');
-        
-        if (body.classList.contains('dark-mode')) {
-          darkModeToggle.textContent = 'Light';
-          localStorage.setItem('darkMode', 'enabled');
-        } else {
-          darkModeToggle.textContent = 'Dark';
-          localStorage.setItem('darkMode', 'disabled');
-        }
-      };
-
-      async function sendChat() {
-  const input = el('chatInput');
-  const chatBox = el('chatBox');
-  const statusEl = el('chatStatus');
-  const question = input.value.trim();
-  const iri = el('manufacturerSelect').value;
-
-  if (!question) return;
-  if (!iri) {
-    statusEl.textContent = "Please select a manufacturer first.";
-    return;
-  }
-
-  const placeholder = el('chatPlaceholder');
-  if (placeholder) placeholder.remove();
-  
-  const userMsg = document.createElement('div');
-  userMsg.style.display = 'flex';
-  userMsg.style.justifyContent = 'flex-end';
-  userMsg.style.marginBottom = '12px';
-  const stateVal = el('stateFilter').value;
-  const stateLabel = el('stateFilter').options[el('stateFilter').selectedIndex].text;
-  const stateTag = stateVal !== 'all' ? ` <span style="font-size:10px;background:rgba(0,0,0,0.15);padding:1px 6px;border-radius:8px;">${stateLabel}</span>` : '';
-  userMsg.innerHTML = `
-    <div style="background: #007bff; color: white; padding: 10px 14px; border-radius: 18px; max-width: 70%; word-wrap: break-word; font-style:normal;">
-     ${question}${stateTag}
-    </div>
-  `;
-  chatBox.appendChild(userMsg);
-  
-  input.value = "";
-  statusEl.textContent = "Thinking...";
-
-  try {
-    const res = await fetch("/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question, iri, state: el('stateFilter').value })
-    });
-    const data = await res.json();
-
-    console.log("Full response:", data);
-
-    const botMsgContainer = document.createElement('div');
-    botMsgContainer.style.display = 'flex';
-    botMsgContainer.style.justifyContent = 'flex-start';
-    botMsgContainer.style.marginBottom = '12px';
-    
-    const botMsg = document.createElement('div');
-    botMsg.style.background = '#e9ecef';
-    botMsg.style.color = '#333';
-    botMsg.style.padding = '10px 14px';
-    botMsg.style.borderRadius = '18px';
-    botMsg.style.maxWidth = '70%';
-    botMsg.style.wordWrap = 'break-word';
-    botMsg.innerHTML = ` ${data.answer}`;
-    
-    botMsgContainer.appendChild(botMsg);
-    chatBox.appendChild(botMsgContainer);
-
-    chatBox.scrollTop = chatBox.scrollHeight;
-    statusEl.textContent = "";
-  } catch (err) {
-    console.error("Error:", err);
-    statusEl.textContent = "Error reaching the server.";
-  }
-}
-
-    </script>
-
-  <!-- ═══════════════════ FLOATING PRIVACY BOT ═══════════════════ -->
-  <style>
-    #privacyBotWidget {
-      position: fixed;
-      bottom: 24px;
-      right: 24px;
-      z-index: 9999;
-      display: flex;
-      flex-direction: column;
-      align-items: flex-end;
-      gap: 10px;
-    }
-    #privacyBotPanel {
-      width: 360px;
-      background: #fff;
-      border-radius: 16px;
-      box-shadow: 0 8px 32px rgba(0,0,0,0.22);
-      overflow: hidden;
-      transition: max-height 0.3s cubic-bezier(.4,0,.2,1), opacity 0.3s;
-      max-height: 520px;
-      opacity: 1;
-      display: flex;
-      flex-direction: column;
-    }
-    #privacyBotPanel.bot-collapsed {
-      max-height: 0;
-      opacity: 0;
-      pointer-events: none;
-    }
-    .bot-header {
-      background: #1a1a2e;
-      color: #fff;
-      padding: 12px 16px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      font-weight: 700;
-      font-size: 15px;
-      flex-shrink: 0;
-    }
-    .bot-header span { font-size: 13px; font-weight: 400; color: rgba(255,255,255,0.7); }
-    .bot-minimize-btn {
-      background: rgba(255,255,255,0.15);
-      border: none;
-      color: #fff;
-      border-radius: 6px;
-      padding: 2px 10px;
-      cursor: pointer;
-      font-size: 18px;
-      line-height: 1.2;
-      transition: background 0.15s;
-    }
-    .bot-minimize-btn:hover { background: rgba(255,255,255,0.28); }
-    #chatBox {
-      flex: 1;
-      overflow-y: auto;
-      padding: 12px;
-      background: #f5f5f5;
-      min-height: 200px;
-      max-height: 300px;
-    }
-    .bot-input-row {
-      display: flex;
-      gap: 6px;
-      padding: 10px 12px;
-      background: #fff;
-      border-top: 1px solid #eee;
-      flex-shrink: 0;
-    }
-    .bot-input-row input {
-      flex: 1;
-      padding: 7px 10px;
-      border-radius: 8px;
-      border: 1px solid #ddd;
-      font-size: 13px;
-      outline: none;
-    }
-    .bot-input-row input:focus { border-color: #1a1a2e; }
-    .bot-input-row button {
-      padding: 7px 14px;
-      border-radius: 8px;
-      background: #1a1a2e;
-      color: #fff;
-      border: none;
-      font-size: 13px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: background 0.15s;
-    }
-    .bot-input-row button:hover { background: #2e2e5e; }
-    #chatStatus { font-size: 11px; color: #888; padding: 2px 12px 6px; background: #fff; }
-    #privacyBotFab {
-      width: 52px;
-      height: 52px;
-      border-radius: 50%;
-      background: #1a1a2e;
-      border: none;
-      color: #fff;
-      font-size: 11px;
-      font-weight: 700;
-      letter-spacing: 0.5px;
-      cursor: pointer;
-      box-shadow: 0 4px 18px rgba(0,0,0,0.28);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      transition: background 0.15s, transform 0.15s;
-      flex-shrink: 0;
-    }
-    #privacyBotFab:hover { background: #2e2e5e; transform: scale(1.08); }
-
-    /* ── Fullscreen mode ── */
-    #privacyBotWidget.bot-fullscreen {
-      bottom: 0;
-      right: 0;
-      width: 100vw;
-      height: 100vh;
-      gap: 0;
-    }
-    #privacyBotWidget.bot-fullscreen #privacyBotPanel {
-      width: 100%;
-      height: 100%;
-      max-height: 100vh;
-      border-radius: 0;
-      flex: 1;
-    }
-    #privacyBotWidget.bot-fullscreen #chatBox {
-      max-height: none;
-      flex: 1;
-    }
-    #privacyBotWidget.bot-fullscreen #privacyBotFab {
-      display: none;
-    }
-    .bot-fullscreen-btn {
-      background: rgba(255,255,255,0.15);
-      border: none;
-      color: #fff;
-      border-radius: 6px;
-      padding: 2px 9px;
-      cursor: pointer;
-      font-size: 14px;
-      line-height: 1.4;
-      transition: background 0.15s;
-      margin-right: 4px;
-    }
-    .bot-fullscreen-btn:hover { background: rgba(255,255,255,0.28); }
-  </style>
-
-  <div id="privacyBotWidget">
-    <div id="privacyBotPanel">
-      <div class="bot-header">
-        Privacy Bot
-        <span>Ask about compliance</span>
-        <div style="display:flex;align-items:center;gap:4px;">
-          <button class="bot-fullscreen-btn" onclick="toggleBotFullscreen()" id="botFullscreenBtn" title="Fullscreen">&#x26F6;</button>
-          <button class="bot-minimize-btn" onclick="toggleBot()" title="Minimize">&#8722;</button>
-        </div>
-      </div>
-      <div id="chatBox">
-        <p style="color:#aaa; font-size:13px; margin:0;" id="chatPlaceholder">Your conversation will appear here...</p>
-      </div>
-      <div class="bot-input-row">
-        <input id="chatInput" type="text" placeholder="e.g. Does Ring cover unique passwords?" />
-        <button id="btnChat">Ask</button>
-      </div>
-      <div id="chatStatus"></div>
-    </div>
-    <button id="privacyBotFab" onclick="toggleBot()" title="Toggle Privacy Bot">BOT</button>
-  </div>
-
-  <script>
-    function toggleBot() {
-      document.getElementById('privacyBotPanel').classList.toggle('bot-collapsed');
+        "comparison": any(w in q for w in ["compare", "difference", "different", "common", "overlap", "versus", " vs ", "same"]),
+        "rules": any(w in q for w in ["rules", "rule", "requirements", "classes", "make up", "specified", "legislation annotations"]),
+        "missing": any(w in q for w in ["missing", "non-compliant", "non compliant", "does not comply", "fails", "gap", "weakly"]),
+        "score": any(w in q for w in ["score", "coverage", "percent", "grade"]),
     }
 
-    function toggleBotFullscreen() {
-      const widget = document.getElementById('privacyBotWidget');
-      const btn = document.getElementById('botFullscreenBtn');
-      const isFullscreen = widget.classList.toggle('bot-fullscreen');
-      btn.title = isFullscreen ? 'Exit Fullscreen' : 'Fullscreen';
-      btn.innerHTML = isFullscreen ? '&#x2715;' : '&#x26F6;';
-      // Scroll chat to bottom after layout change
-      const chatBox = document.getElementById('chatBox');
-      setTimeout(() => { chatBox.scrollTop = chatBox.scrollHeight; }, 50);
-    }
 
-    document.getElementById('btnChat').onclick = sendChat;
-    document.getElementById('chatInput').addEventListener('keydown', e => {
-      if (e.key === 'Enter') sendChat();
-    });
-  </script>
+def build_chat_context(mfg, scores, state, question=""):
+    """
+    Small, intent-aware context for Groq's 6k TPM limit.
+    Instead of always sending every hasLaw annotation, only send the sections
+    needed for the user's question.
+    """
+    name    = mfg["name"]
+    covered = scores["covered"]
+    missing = scores["missing"]
+    lc      = scores["law_coverage"]
+    overall = scores["overall"]
+    w       = scores["weighted"]
+    scope   = state if state != "all" else "all regulations"
+    intent  = _question_intent(question)
+    wanted_laws = _wanted_laws_from_question(question, state)
+    explicit_laws_for_context = _explicit_laws_from_question(question)
+    wanted_law_ids = {law["id"] for law in wanted_laws}
+    wanted_law_labels = {law["label"] for law in wanted_laws}
 
-  </body>
-</html>
+    # Default to the most useful context when the question is vague.
+    if not any(intent.values()):
+        intent["score"] = True
+        intent["missing"] = True
+
+    out = [f"Manufacturer: {name} | Active compliance scope: {scope}"]
+
+    if intent["score"] or intent["missing"]:
+        out.append("\nCompliance scores for the selected manufacturer:")
+        display_lc = [lw for lw in lc if not explicit_laws_for_context or lw.get("id") in wanted_law_ids or lw.get("label") in wanted_law_labels]
+        for lw in display_lc:
+            out.append(f"  {lw['label']}: {lw['coverage_percent']}% ({lw['num_above']}/{lw['num_classes']} requirements covered)")
+        if not explicit_laws_for_context:
+            out.append(f"  Overall flat coverage: {overall}%")
+            if w:
+                out.append(f"  Overall weighted: {w.get('overall_weighted_score','?')}% | Grade: {w.get('overall_grade','?')}")
+
+    # Law rules from KG: compact by default; annotations only for the requested law(s).
+    if intent["rules"]:
+        rules = law_rules_from_kg(wanted_laws)
+        out.append("\nRules found in the knowledge graph for the requested legislation:")
+        for law in wanted_laws:
+            law_data = rules.get(law["id"], {"rules": []})
+            out.append(f"  {law['label']} includes these requirements:")
+            for r in law_data["rules"][:25]:
+                ann = _trim(r.get("annotation", ""), 150)
+                out.append(f"    - Requirement name: {r['class_label']} | Legal text note: {ann}")
+
+    # Clean law comparison: only class names, no long annotations.
+    if intent["comparison"]:
+        compare_laws = wanted_laws if len(wanted_laws) >= 2 else LAWS
+        kg_compare = law_comparison_from_kg(compare_laws)
+        out.append("\nLegislation comparison based on rules in the knowledge graph:")
+        out.append("  Requirements shared by the requested laws: " + (", ".join(kg_compare["common_rules"][:40]) if kg_compare["common_rules"] else "None found"))
+        for law in compare_laws:
+            rules = kg_compare["rules_by_law"].get(law["id"], {}).get("rules", [])
+            unique = kg_compare["unique_rules"].get(law["id"], [])
+            out.append(f"  {law['label']} includes: " + (", ".join([r["class_label"] for r in rules[:25]]) if rules else "None found"))
+            out.append(f"  Requirements mainly found in {law['label']}: " + (", ".join(unique[:20]) if unique else "None found"))
+
+    # Missing details: for a specific law, include EVERY missing item for that law.
+    # For broad/all-regulation questions, keep a top-N fallback to avoid Groq TPM errors.
+    if intent["missing"]:
+        explicit_laws = explicit_laws_for_context
+        law_labels_filter = {law["label"] for law in explicit_laws}
+
+        if law_labels_filter:
+            missing_for_context = [m for m in missing if m.get("law_label") in law_labels_filter]
+            header_scope = ", ".join(sorted(law_labels_filter))
+            out.append(f"\nMissing requirements for the selected manufacturer policy — all items for {header_scope} ({len(missing_for_context)}):")
+        elif state and state != "all":
+            # compute_scores() is already scoped by state, so this is safe to show in full.
+            missing_for_context = missing
+            out.append(f"\nMissing requirements for the selected manufacturer policy — all items for the active filter ({len(missing_for_context)}):")
+        else:
+            missing_for_context = missing[:10]
+            out.append(f"\nMissing requirements for the selected manufacturer policy — top {min(len(missing), 10)} of {len(missing)}:")
+
+        for m in missing_for_context:
+            out.append(f"  ✗ Requirement name: {m['class_label']} | Law: {m['law_label']}")
+            if m.get("desc"):
+                out.append(f"    Plain meaning / requirement: {_trim(m['desc'], 180)}")
+            if m.get("annotation"):
+                out.append(f"    Legal text note from KG: {_trim(m['annotation'], 260)}")
+        if not missing_for_context:
+            out.append("  None — all requirements appear addressed for this law/filter.")
+
+    # Include a tiny covered sample only if useful and there is room.
+    if (intent["missing"] or intent["score"]) and covered:
+        covered_for_context = []
+        for c in covered:
+            law_labels = [label for label in c.get("law_labels", []) if not explicit_laws_for_context or label in wanted_law_labels]
+            if law_labels:
+                item = dict(c)
+                item["law_labels"] = law_labels
+                covered_for_context.append(item)
+        if covered_for_context:
+            out.append(f"\nCovered examples — top {min(len(covered_for_context), 6)}:")
+            for c in covered_for_context[:6]:
+                out.append(f"  ✓ Requirement name: {c['class_label']} | Law: {', '.join(c['law_labels'])}")
+
+    return "\n".join(out)
+
+
+# =============================================================================
+# LLM
+# =============================================================================
+SYSTEM_PROMPT = (
+    "You are a concise IoT privacy compliance assistant. "
+    "Answer only from the structured DATA provided from the knowledge graph. Never invent law sections, rules, or facts.\n\n"
+    "Rules:\n"
+    "• Do not print internal headings such as KG LAW COMPARISON, KG LEGISLATION RULES, DATA, or COMPLIANCE SCORES.\n"
+    "• Do not use phrases like gap score, section/reference, BERT, KG annotation, class IRI, or technical ontology terms in the final answer.\n"
+    "• When explaining legislation rules, translate each requirement name into natural language for a non-technical reader. Explain what the law is asking a company to do, not just the class name.\n"
+    "• When comparing two laws, answer naturally: first say what both laws share, then say what each law uniquely emphasizes. Do not use a rigid template or internal labels.\n"
+    "• For missing privacy-policy coverage, list every missing item provided in DATA. For each item, use about two plain-English sentences: what the law expects, and what the selected policy does not clearly say.\n"
+    "• Only reference the specific law or laws provided in the DATA. If only NISTIR 8259 is provided, do not mention Public Law 116-207 or any other federal law.\n"
+    "• Scores → one sentence, prefer weighted score when available. Nothing missing → one sentence, stop.\n"
+    "• Keep answers focused; usually under 300 words unless the user asks for all rules."
+)
+def _call_llm(question, context):
+    try:
+        resp = groq_client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[{"role": "system", "content": SYSTEM_PROMPT},
+                      {"role": "user",   "content": f"DATA:\n{context}\n\nQUESTION:\n{question}"}],
+            temperature=0.1, max_tokens=700)
+        return resp.choices[0].message.content.strip()
+    except Exception as e:
+        return f"Error: {e}"
+
+@lru_cache(maxsize=256)
+def _cached_llm(question, ctx_hash, context):
+    return _call_llm(question, context)
+
+def ask_llm(question, context):
+    h = hashlib.md5(context.encode()).hexdigest()
+    return _cached_llm(question, h, context)
+
+
+# =============================================================================
+# HELPERS
+# =============================================================================
+def _gen_iri(name):
+    base = str(MFG_CLS).split("#")[0] + "#"
+    slug = re.sub(r"\W+", "_", name.strip()) or "Manufacturer"
+    cand = URIRef(base + slug)
+    i = 1
+    while (cand, None, None) in g:
+        cand = URIRef(base + f"{slug}_{i}"); i += 1
+    return cand
+
+def _find_mfg(name):
+    t = name.lower().strip()
+    return next((m for m in manufacturers if m["name"].lower().strip() == t), None)
+
+
+# =============================================================================
+# ROUTES
+# =============================================================================
+@app.get("/")
+def index():
+    return render_template("index.html")
+
+@app.get("/list")
+def list_mfg():
+    return jsonify([{"iri": m["iri"], "name": m["name"]} for m in manufacturers])
+
+
+@app.get("/detail")
+def detail():
+    """Returns flat + weighted scores, covered, missing classes — one payload."""
+    iri   = request.args.get("iri")
+    state = norm_state(request.args.get("state", "all"))
+    if not iri:
+        return jsonify({"error": "missing iri"}), 400
+
+    mfg = next((m for m in manufacturers if m["iri"] == iri), None)
+    if not mfg:
+        inst = URIRef(iri)
+        lbls = [str(o) for o in g.objects(inst, RDFS.label)]
+        pols = [str(o) for o in g.objects(inst, POLICY_PROP) if isinstance(o, Literal)]
+        mfg  = {"iri": iri,
+                "name":   clean_name(lbls[0] if lbls else local_name(iri)),
+                "policy": max(pols, key=len) if pols else ""}
+
+    scores = compute_scores(mfg["policy"], state)
+    return jsonify({
+        "iri":          mfg["iri"],
+        "name":         mfg["name"],
+        "policy":       mfg["policy"],
+        "state":        state,
+        "overall":      scores["overall"],
+        "law_coverage": scores["law_coverage"],
+        "covered":      scores["covered"],
+        "missing":      scores["missing"],
+        "weighted":     scores["weighted"],
+    })
+
+
+@app.post("/chat")
+def chat():
+    """Uses compute_scores() — same as /detail — so numbers always match."""
+    data     = request.get_json(force=True) or {}
+    question = (data.get("question") or "").strip()
+    iri      = (data.get("iri") or "").strip()
+    state    = norm_state(data.get("state", "all"))
+
+    if not question or not iri:
+        return jsonify({"answer": "Please select a manufacturer and ask a question."}), 400
+    mfg = next((m for m in manufacturers if m["iri"] == iri), None)
+    if not mfg:
+        return jsonify({"answer": "Manufacturer not found."}), 404
+
+    scores  = compute_scores(mfg["policy"], state)
+    context = build_chat_context(mfg, scores, state, question)
+    answer  = ask_llm(question, context)
+    return jsonify({"answer": answer}), 200
+
+
+@app.post("/add_manufacturer")
+def add_manufacturer():
+    data      = request.get_json(force=True) or {}
+    name      = (data.get("name") or "").strip()
+    policy    = (data.get("policy") or "").strip()
+    sel_states = data.get("selected_states") or []
+    if not name or not policy:
+        return jsonify({"error": "name and policy required"}), 400
+
+    existing = _find_mfg(name)
+    inst_iri = URIRef(existing["iri"]) if existing else _gen_iri(name)
+    if not existing:
+        g.add((inst_iri, RDF.type, MFG_CLS))
+        g.add((inst_iri, RDFS.label, Literal(name)))
+        g.add((inst_iri, USER_ADDED_PROP, Literal(True)))
+
+    ts_info = ts.upsert_policy(g, inst_iri, POLICY_PROP, policy)
+    auto    = state_detector.detect_states_from_text(policy)
+    states  = sel_states or [s["id"] for s in auto["detected"]]
+
+    for old in list(g.objects(inst_iri, APPLIES_TO_STATE_PROP)):
+        g.remove((inst_iri, APPLIES_TO_STATE_PROP, old))
+    for sid in states:
+        g.add((inst_iri, APPLIES_TO_STATE_PROP, Literal(sid)))
+
+    entry = {"iri": str(inst_iri), "name": clean_name(name),
+             "policy": policy, "user_added": True}
+    if existing:
+        manufacturers[:] = [m for m in manufacturers if m["iri"] != str(inst_iri)]
+    manufacturers.append(entry)
+    manufacturers.sort(key=lambda m: m["name"].lower())
+
+    try:
+        g.serialize(destination=str(ONTO_PATH), format="xml")
+    except Exception as e:
+        return jsonify({"error": f"Memory OK, file write failed: {e}"}), 500
+
+    return jsonify({"iri": entry["iri"], "name": entry["name"],
+                    "action": ts_info["action"],
+                    "created_at": ts_info["created_at"],
+                    "modified_at": ts_info["modified_at"],
+                    "auto_detected_states": auto, "selected_states": states,
+                    "applicable_laws": state_detector.applicable_laws(states, LAWS),
+                    }), 200 if existing else 201
+
+
+@app.post("/extract_pdf")
+def extract_pdf():
+    if "file" not in request.files:
+        return jsonify({"error": "No file"}), 400
+    f = request.files["file"]
+    if not f or not allowed_file(f.filename):
+        return jsonify({"error": "PDF only"}), 400
+    path = os.path.join(app.config["UPLOAD_FOLDER"], secure_filename(f.filename))
+    f.save(path)
+    try:
+        text = "\n\n".join(p.extract_text() or "" for p in PdfReader(path).pages).strip()
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        try: os.remove(path)
+        except: pass
+    return jsonify({"text": text}), 200
+
+
+@app.post("/upload_regulation")
+def upload_regulation():
+    f         = request.files.get("file")
+    law_id    = (request.form.get("law_id") or "").strip()
+    law_label = (request.form.get("law_label") or "").strip()
+    if not f or not allowed_file(f.filename) or not law_id or not law_label:
+        return jsonify({"error": "PDF, law_id, law_label required"}), 400
+    path = os.path.join(app.config["UPLOAD_FOLDER"], secure_filename(f.filename))
+    f.save(path)
+    try:
+        text  = reg_add.read_pdf_text(path)
+        sm    = SentenceTransformer(EMBED_MODEL)
+        matched, new_cands = reg_add.extract_candidate_classes(text, sm)
+        base  = str(MFG_CLS).split("#")[0] + "#"
+        annotated, created = [], []
+        for m in matched:
+            ex = reg_add.find_existing_class(g, m["label"])
+            if ex:
+                reg_add.annotate_existing_class(g, ex, law_label, m["example_sentences"])
+                annotated.append(m["label"])
+        for n in new_cands:
+            if not reg_add.find_existing_class(g, n["label"]):
+                reg_add.create_new_class(g, base, n["label"], law_label, n["example_sentences"])
+                created.append(n["label"])
+        reg_add.register_law_in_config("config.json", law_id, law_label,
+                                       [law_label, law_id.replace("_", " ")])
+        g.serialize(destination=str(ONTO_PATH), format="xml")
+        return jsonify({"annotated": annotated, "created": created})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        try: os.remove(path)
+        except: pass
+
+
+@app.post("/update_regulation")
+def update_regulation():
+    data = request.get_json(force=True) or {}
+    for k in ["law_id", "law_label", "new_version", "updated_classes"]:
+        if k not in data:
+            return jsonify({"error": f"Missing {k}"}), 400
+    base   = str(MFG_CLS).split("#")[0] + "#"
+    result = reg_update.update_regulation(g, base, **{k: data[k] for k in
+                ["law_label","law_id","new_version","updated_classes"]})
+    try:
+        g.serialize(destination=str(ONTO_PATH), format="xml")
+    except Exception as e:
+        return jsonify({"error": str(e), **result}), 500
+    return jsonify(result)
+
+
+@app.get("/manufacturer_history")
+def manufacturer_history():
+    iri = request.args.get("iri")
+    if not iri:
+        return jsonify({"error": "missing iri"}), 400
+    return jsonify(ts.get_policy_history(g, URIRef(iri), POLICY_PROP))
+
+
+@app.post("/detect_states")
+def detect_states():
+    data   = request.get_json(force=True) or {}
+    policy = (data.get("policy") or "").strip()
+    if not policy:
+        return jsonify({"error": "policy required"}), 400
+    auto = state_detector.detect_states_from_text(policy)
+    return jsonify({"auto_detection": auto,
+                    "applicable_laws": state_detector.applicable_laws(
+                        [s["id"] for s in auto["detected"]], LAWS)})
+
+
+@app.get("/weighted_grade_trigger")
+def weighted_grade_trigger():
+    """
+    Pre-warms the weighted score cache for a manufacturer.
+    Call once after selecting a manufacturer; /detail will use the cache.
+    GET /weighted_grade_trigger?iri=<iri>&state=all
+    """
+    iri   = request.args.get("iri")
+    state = norm_state(request.args.get("state", "all"))
+    if not iri:
+        return jsonify({"error": "missing iri"}), 400
+    mfg = next((m for m in manufacturers if m["iri"] == iri), None)
+    if not mfg:
+        return jsonify({"error": "not found"}), 404
+    try:
+        result = wgrader.run_weighted_grading(mfg, state, use_cache=False)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+if __name__ == "__main__":
+    app.run(debug=True, port=5000)
