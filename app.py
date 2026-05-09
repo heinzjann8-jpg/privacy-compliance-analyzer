@@ -1,1411 +1,1559 @@
-from flask import Flask, render_template, request, jsonify
-from rdflib import Graph, URIRef, RDF, RDFS, OWL, Literal
-from pathlib import Path
-import json
-import re
-import numpy as np
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
-from sentence_transformers import SentenceTransformer
-from werkzeug.utils import secure_filename
-from PyPDF2 import PdfReader
-import os
-from dotenv import load_dotenv          
-from groq import Groq                   
-load_dotenv()                           
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Privacy Policy Compliance Analyzer</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+    <style>
+      /* ── Ribbon nav ── */
+      .ribbon {
+        position: sticky;
+        top: 0;
+        z-index: 100;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(20, 20, 40, 0.92);
+        backdrop-filter: blur(8px);
+        padding: 0 24px;
+        height: 56px;
+        border-bottom: 1px solid rgba(255,255,255,0.1);
+      }
+      .ribbon-logo {
+        position: absolute;
+        left: 24px;
+        font-size: 15px;
+        font-weight: 700;
+        color: #fff;
+        letter-spacing: 0.3px;
+        white-space: nowrap;
+      }
+      .ribbon-tabs {
+        display: flex;
+        gap: 4px;
+      }
+      .ribbon-tab {
+        background: none;
+        border: none;
+        color: rgba(255,255,255,0.65);
+        font-size: 18px;
+        font-weight: 600;
+        padding: 8px 20px;
+        border-radius: 6px;
+        cursor: pointer;
+        transition: background 0.15s, color 0.15s;
+      }
+      .ribbon-tab:hover {
+        background: rgba(255,255,255,0.1);
+        color: #fff;
+      }
+      .ribbon-tab.active {
+        background: rgba(255,255,255,0.15);
+        color: #fff;
+      }
+      .ribbon-right {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
 
-app = Flask(__name__)
-# ---- PDF Upload Settings ----
-UPLOAD_FOLDER = "uploads"
-ALLOWED_EXTENSIONS = {"pdf"}
-MAX_UPLOAD_MB = 10
+      /* ── Page sections ── */
+      .page-section { display: none; }
+      .page-section.active { display: block; }
 
-app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
-app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
+      /* ── About / Laws panels ── */
+      .info-panel {
+        background: #ffffff;
+        border-radius: 12px;
+        padding: 28px 32px;
+        margin-bottom: 24px;
+        border: 1px solid #e0e0e0;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+      }
+      .info-panel h2 {
+        color: #1a1a2e;
+        margin-top: 0;
+        margin-bottom: 8px;
+        font-size: 22px;
+      }
+      .info-panel h3 {
+        color: #1a1a2e;
+        margin-top: 28px;
+        margin-bottom: 8px;
+        font-size: 17px;
+      }
+      .info-panel p {
+        color: #444;
+        line-height: 1.7;
+        margin-top: 0;
+        font-weight: normal;
+      }
+      .info-panel code {
+        background: #f0f0f0;
+        color: #c0392b;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 13px;
+      }
+      .info-panel hr {
+        border: none;
+        border-top: 1px solid #e0e0e0;
+        margin: 24px 0;
+      }
+      .law-badge {
+        display: inline-block;
+        background: #1a1a2e;
+        color: #fff;
+        font-size: 12px;
+        font-weight: 600;
+        padding: 3px 10px;
+        border-radius: 20px;
+        margin-bottom: 10px;
+        letter-spacing: 0.3px;
+      }
+      .info-btn {
+        display: inline-block;
+        margin-top: 12px;
+        padding: 8px 18px;
+        background: #1a1a2e;
+        color: #fff;
+        border: 1px solid #1a1a2e;
+        border-radius: 8px;
+        font-size: 13px;
+        font-weight: 500;
+        text-decoration: none;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .info-btn:hover { background: #2e2e5e; border-color: #2e2e5e; }
 
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+      .about-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        margin-top: 20px;
+      }
+      .about-card {
+        background: #f8f9fa;
+        border: 1px solid #e0e0e0;
+        border-radius: 10px;
+        padding: 18px 20px;
+      }
+      .about-card h4 {
+        color: #1a1a2e;
+        margin: 0 0 8px 0;
+        font-size: 15px;
+      }
+      .about-card p {
+        color: #555;
+        font-size: 13px;
+        margin: 0;
+        line-height: 1.6;
+      }
 
-#only pdf
-def allowed_file(filename: str) -> bool:
-    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+      /* ── Home button ── */
+      .ribbon-home {
+        background: rgba(255,255,255,0.18);
+        border: 1px solid rgba(255,255,255,0.3);
+        color: #fff;
+        font-size: 14px;
+        font-weight: 600;
+        padding: 5px 14px;
+        border-radius: 6px;
+        cursor: pointer;
+        transition: background 0.15s, color 0.15s;
+        margin-right: 8px;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+      }
+      .ribbon-home:hover {
+        background: rgba(255,255,255,0.28);
+      }
 
-#--#--#
-# -------------------- SETUP and Config reads json and picks things to load --------------------
-CFG = json.load(open("config.json", "r", encoding="utf-8"))
+      /* ── Coverage History Timeline ── */
+      #tab-history { padding-bottom: 40px; }
+      .timeline-controls {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-bottom: 20px;
+        background: rgba(255,255,255,0.07);
+        border: 1px solid rgba(255,255,255,0.12);
+        border-radius: 12px;
+        padding: 18px 22px;
+      }
+      .timeline-controls label { color: #fff; font-weight: 600; font-size: 14px; }
+      .timeline-controls select {
+        padding: 6px 12px;
+        border-radius: 8px;
+        border: 1px solid rgba(255,255,255,0.25);
+        background: rgba(255,255,255,0.12);
+        color: #fff;
+        font-size: 14px;
+        cursor: pointer;
+      }
+      .timeline-controls select option { background: #1a1a2e; color: #fff; }
+      .timeline-clear-btn {
+        margin-left: auto;
+        padding: 6px 14px;
+        background: rgba(220,53,69,0.2);
+        border: 1px solid rgba(220,53,69,0.5);
+        color: #ff6b7a;
+        border-radius: 8px;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .timeline-clear-btn:hover { background: rgba(220,53,69,0.4); }
+      .timeline-chart-wrap {
+        background: #fff;
+        border-radius: 12px;
+        padding: 24px;
+        margin-bottom: 24px;
+        border: 1px solid #e0e0e0;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        position: relative;
+        min-height: 320px;
+      }
+      .timeline-chart-wrap h3 {
+        margin: 0 0 16px 0;
+        color: #1a1a2e;
+        font-size: 17px;
+      }
+      .timeline-empty {
+        text-align: center;
+        padding: 60px 20px;
+        color: rgba(255,255,255,0.5);
+        font-size: 15px;
+        background: rgba(255,255,255,0.04);
+        border: 1px dashed rgba(255,255,255,0.15);
+        border-radius: 12px;
+      }
+      .timeline-empty p { margin: 8px 0; }
+      .timeline-empty .big { font-size: 36px; margin-bottom: 12px; }
+      .timeline-snapshots-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+        background: #fff;
+        border-radius: 12px;
+        overflow: hidden;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+      }
+      .timeline-snapshots-table th {
+        background: #1a1a2e;
+        color: #fff;
+        padding: 10px 14px;
+        text-align: left;
+        font-weight: 600;
+      }
+      .timeline-snapshots-table td {
+        padding: 9px 14px;
+        border-bottom: 1px solid #f0f0f0;
+        color: #333;
+      }
+      .timeline-snapshots-table tr:last-child td { border-bottom: none; }
+      .timeline-snapshots-table tr:hover td { background: #f8f9fa; }
+      .snap-badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-size: 11px;
+        font-weight: 700;
+      }
+      .snap-badge.high   { background: #d4edda; color: #155724; }
+      .snap-badge.mid    { background: #fff3cd; color: #856404; }
+      .snap-badge.low    { background: #f8d7da; color: #721c24; }
+      .snap-del-btn {
+        background: none;
+        border: none;
+        color: #dc3545;
+        cursor: pointer;
+        font-size: 15px;
+        padding: 2px 6px;
+        border-radius: 4px;
+        transition: background 0.1s;
+      }
+      .snap-del-btn:hover { background: #f8d7da; }
 
-ONTO_PATH = Path(CFG["ontology_path"]).resolve()
-MANUFACTURER_CLS = URIRef(CFG["manufacturer_class_iri"])
-POLICY_PROP = URIRef(CFG["policy_property_iri"])
+      /* ── Live compliance charts ── */
+      .charts-row {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 20px;
+        margin: 24px 0;
+      }
+      .chart-box {
+        background: #fff;
+        border-radius: 12px;
+        padding: 20px 22px;
+        border: 1px solid #e0e0e0;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        position: relative;
+        min-height: 260px;
+      }
+      .chart-box h4 {
+        margin: 0 0 14px 0;
+        font-size: 14px;
+        font-weight: 600;
+        color: #1a1a2e;
+        text-transform: uppercase;
+        letter-spacing: 0.4px;
+      }
+      @media (max-width: 640px) {
+        .charts-row { grid-template-columns: 1fr; }
+      }
+      @media (max-width: 600px) {
+        .about-grid { grid-template-columns: 1fr; }
+        .ribbon-logo { display: none; }
+      }
+    </style>
+  </head>
+  <body>
 
-TOP_K = int(CFG.get("top_k", 8))
-LAW_PREDICATES = [URIRef(p) for p in CFG.get("law_annotation_predicates", [])]
-LAWS = CFG.get("laws", [])
-COVERAGE_THRESHOLD = float(CFG.get("coverage_threshold", 0.0))
-MISSING_CLASS_SIM_THRESHOLD = COVERAGE_THRESHOLD
-SIMILARITY_METHOD = CFG.get("similarity_method", "tfidf").lower()
-EMBEDDING_MODEL_NAME = CFG.get("embedding_model_name", "all-MiniLM-L6-v2")
-USER_ADDED_PROP = URIRef("http://example.org/onto.owl#userAddedManufacturer")
+  <!-- ═══════════════════════════ RIBBON NAV ═══════════════════════════ -->
+  <nav class="ribbon">
+    <span class="ribbon-logo">Privacy Policy Compliance Analyzer</span>
+    <div class="ribbon-tabs">
+      <button class="ribbon-tab active" id="tab-btn-home" onclick="showTab('home', this)">Home</button>
+      <button class="ribbon-tab" id="tab-btn-laws" onclick="showTab('laws', this)">About the Laws</button>
+      <button class="ribbon-tab" id="tab-btn-about" onclick="showTab('about', this)">About the App</button>
 
-# Only show these manufacturers in dropdown
-ALLOWED_MANUFACTURERS = {
-    "ADT", "ATT", "Brainly", "Bloomberg",
-    "Dodge", "Emerson", "EOS", "Fitbit",
-    "NYTimes", "Panasonic", "Puma", "Ring",
-    "UPS", "Verizon", "Vivint"
-}
-SPECIAL_NAME_FIXES = {
-    "att": "AT&T",
-    "adt": "ADT",
-    "ups": "UPS",
-    "nytimes": "NYTimes",
-    "eos": "EOS",
-    "ebay": "eBay"
-}
+    </div>
+  </nav>
 
-def clean_manufacturer_name(name: str) -> str:
-    """Normalize manufacturer labels so they look neat."""
-    lower = name.lower().strip()
-    if lower in SPECIAL_NAME_FIXES:
-        return SPECIAL_NAME_FIXES[lower]
-    return name.title()
+  <div class="container">
 
-def clean_class_label(label: str) -> str:
-    """Fix known class capitalization issues."""
-    fixes = {
-        "network interface": "Network Interface",
-        "iot device": "IoT Device",
-        "io tdevice": "IoT Device",
-        "iotdevice": "IoT Device",
+    <!-- ═══════════════════════════ HOME TAB ═══════════════════════════ -->
+    <div id="tab-home" class="page-section active">
+
+      <h1 style="text-align: center; color: white; font-size: 46px; font-family: 'Arial Black', sans-serif;">Privacy Policy Compliance Analyzer</h1>
+
+<!-- ---------------------------------------------------------------- MANUFACTURER SELECT --------------------------------------------------------- -->
+
+      <!-- Two launcher cards -->
+      <div style="display:flex; gap:20px; margin-bottom: 28px; flex-wrap:wrap;">
+
+        <!-- Box 1: Manufacturer -->
+        <div onclick="toggleLauncherPanel('mfgPanel', 'regPanel')"
+             style="flex:1; min-width:220px; background:#fff; border:1px solid #ddd;
+                    border-radius:14px; padding:22px 26px; cursor:pointer; transition:background 0.2s, box-shadow 0.2s;
+                    display:flex; align-items:center; gap:16px; box-shadow:0 2px 8px rgba(0,0,0,0.08);"
+             onmouseover="this.style.boxShadow='0 4px 18px rgba(0,0,0,0.15)'"
+             onmouseout="this.style.boxShadow='0 2px 8px rgba(0,0,0,0.08)'">
+          <div style="width:44px;height:44px;background:#1a1a2e;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/><line x1="12" y1="12" x2="12" y2="16"/><line x1="10" y1="14" x2="14" y2="14"/></svg>
+          </div>
+          <div>
+            <div style="color:#1a1a2e; font-size:16px; font-weight:700; margin-bottom:3px;">Manufacturer</div>
+            <div style="color:#666; font-size:13px;">Select or add a manufacturer to analyze</div>
+          </div>
+        </div>
+
+        <!-- Box 2: Regulation Config -->
+        <div onclick="toggleLauncherPanel('regPanel', 'mfgPanel')"
+             style="flex:1; min-width:220px; background:#fff; border:1px solid #ddd;
+                    border-radius:14px; padding:22px 26px; cursor:pointer; transition:background 0.2s, box-shadow 0.2s;
+                    display:flex; align-items:center; gap:16px; box-shadow:0 2px 8px rgba(0,0,0,0.08);"
+             onmouseover="this.style.boxShadow='0 4px 18px rgba(0,0,0,0.15)'"
+             onmouseout="this.style.boxShadow='0 2px 8px rgba(0,0,0,0.08)'">
+          <div style="width:44px;height:44px;background:#1a1a2e;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93A10 10 0 1 0 4.93 19.07M12 2v2M12 20v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M2 12h2M20 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+          </div>
+          <div>
+            <div style="color:#1a1a2e; font-size:16px; font-weight:700; margin-bottom:3px;">Regulation Config</div>
+            <div style="color:#666; font-size:13px;">Add regulations or run incremental updates</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Manufacturer Panel -->
+      <div id="mfgPanel" class="panel hidden" style="margin-bottom:24px;">
+        <h3 style="margin-top:0; margin-bottom:16px;">Manufacturer Selection</h3>
+        <label for="manufacturerSelect"><strong>Select Manufacturer:</strong></label>
+        <div class="row" style="margin-top:8px;">
+          <select id="manufacturerSelect"></select>
+          <button id="btnLoad">Classify</button>
+        </div>
+        <div class="muted small" id="countNote" style="margin-top:8px;"></div>
+
+        <hr style="margin:20px 0; border-color:rgba(0,0,0,0.1);">
+
+        <h4 style="margin-top:0; margin-bottom:12px;">Add a Manufacturer</h4>
+        <div class="field">
+          <label for="newName"><strong>Name</strong></label>
+          <input id="newName" type="text" placeholder="e.g., Apple"
+                 style="width:100%; padding:6px 8px; margin-top:4px; border-radius:8px; border:1px solid var(--border);" />
+        </div>
+        <div class="field" style="margin-top: 12px;">
+          <label for="newPolicy"><strong>Policy description</strong></label>
+          <textarea id="newPolicy" rows="4"
+            placeholder="Paste the relevant privacy policy text here"
+            style="width:100%; padding:6px 8px; margin-top:4px; border-radius:8px; border:1px solid var(--border);"></textarea>
+        </div>
+        <div class="field" style="margin-top: 12px;">
+          <label for="pdfFile"><strong>Upload policy PDF (optional)</strong></label>
+          <input id="pdfFile" type="file" accept="application/pdf" style="display:block; margin-top:6px;" />
+          <button id="btnExtractPdf" type="button" style="margin-top:8px;">Extract text from PDF</button>
+          <div id="pdfStatus" class="small muted" style="margin-top: 6px;"></div>
+        </div>
+        <button id="btnAdd" style="margin-top: 12px;">Save Manufacturer</button>
+        <div id="addStatus" class="small muted" style="margin-top: 8px;"></div>
+      </div>
+
+      <!-- Regulation Config Panel -->
+      <div id="regPanel" class="panel hidden" style="margin-bottom:24px;">
+        <h3 style="margin-top:0; margin-bottom:16px;">Regulation Configuration</h3>
+
+        <h4 style="margin-top:0; margin-bottom:10px;">Add a New Regulation</h4>
+        <div class="field">
+          <label><strong>Regulation Name</strong></label>
+          <input type="text" id="newRegName" placeholder="e.g., GDPR Article 32"
+                 style="width:100%; padding:6px 8px; margin-top:4px; border-radius:8px; border:1px solid var(--border);" />
+        </div>
+        <div class="field" style="margin-top:10px;">
+          <label><strong>Regulation Description / Requirements</strong></label>
+          <textarea id="newRegDesc" rows="3" placeholder="Describe the compliance requirements..."
+            style="width:100%; padding:6px 8px; margin-top:4px; border-radius:8px; border:1px solid var(--border);"></textarea>
+        </div>
+        <button style="margin-top:10px;" onclick="alert('Add Regulation handler — wire to your backend endpoint.')">Save Regulation</button>
+
+        <hr style="margin:20px 0; border-color:rgba(0,0,0,0.1);">
+
+        <h4 style="margin-top:0; margin-bottom:10px;">Incremental Regulation Update</h4>
+        <div class="field">
+          <label><strong>Select Regulation to Update</strong></label>
+          <select id="updateRegSelect" style="width:100%; padding:6px 8px; margin-top:4px; border-radius:8px; border:1px solid var(--border);">
+            <option value="">— choose a regulation —</option>
+            <option value="california">California SB-327</option>
+            <option value="oregon">Oregon HB 2395</option>
+            <option value="nistir">NISTIR 8259</option>
+            <option value="plaw">Federal PL 116-207</option>
+          </select>
+        </div>
+        <div class="field" style="margin-top:10px;">
+          <label><strong>Updated / Additional Requirements</strong></label>
+          <textarea id="updateRegDesc" rows="3" placeholder="Paste updated clause or amendment text..."
+            style="width:100%; padding:6px 8px; margin-top:4px; border-radius:8px; border:1px solid var(--border);"></textarea>
+        </div>
+        <button style="margin-top:10px;" onclick="alert('Incremental update handler — wire to your backend endpoint.')">Apply Update</button>
+        <div class="small muted" style="margin-top:8px;">This will re-classify all manufacturers against the updated regulation.</div>
+      </div>
+
+      <!-- Details -->
+      <div id="details" class="details hidden" style="margin-top: 32px;">
+        <h2 id="mName"></h2>
+
+        <h3>Policy Description</h3>
+        <pre id="policy" class="policy"></pre>
+        <button id="togglePolicy" class="small-btn hidden">Read more</button>
+
+        <hr style="margin-top: 20px;margin-bottom: 20px;">
+
+<!-- ---------------------------------------------------------------- COVERAGE --------------------------------------------------------- -->
+
+        <h3 id="lawHeader">Law Coverage</h3>
+        <div style="margin-bottom: 16px;">
+          <label for="stateFilter"><strong>Filter by State:</strong></label>
+          <select id="stateFilter" style="margin-left: 8px; padding: 4px 8px;">
+            <option value="all">All Regulations</option>
+            <option value="california">California</option>
+            <option value="oregon">Oregon</option>
+            <option value="nistir">NISTIR 8259</option>
+            <option value="plaw">Federal PL 116-207</option>
+          </select>
+        </div>
+        <div id="overallCoverage" style="margin-bottom: 16px; padding: 12px; background: #f5f5f5; border-radius: 8px;">
+          <strong><span id="coverageLabel">Overall Coverage</span>: </strong><span id="overallPercent">--</span>%
+        </div>
+
+        <div id="laws" class="cards law-cards"></div>
+
+        <!-- Live compliance charts — below law percentage cards -->
+        <div class="charts-row" id="chartsRow" style="display:none; margin-top:20px;">
+          <div class="chart-box">
+            <h4>Compliant vs Non-Compliant Rules | Bar Chart</h4>
+            <canvas id="barChart"></canvas>
+          </div>
+        </div>
+
+        <!-- Top & Missing classes side by side -->
+        <div class="row two-col">
+          <div class="col">
+            <h3 id="classHeader">Compliant Rules</h3>
+            <div id="classes" class="cards"></div>
+          </div>
+          <div class="col">
+            <h3 id="missingHeader">Non-Compliant Rules</h3>
+            <div id="missingClasses" class="cards"></div>
+          </div>
+        </div>
+        <hr style="margin-top: 20px;margin-bottom: 20px;">
+
+      </div>
+
+    </div><!-- /tab-home -->
+
+
+    <!-- ═══════════════════════════ LAWS TAB ═══════════════════════════ -->
+    <div id="tab-laws" class="page-section">
+
+      <div class="info-panel">
+        <h2>About the Laws</h2>
+        <p>These are the regulations your privacy policies are checked against. Each law sets specific requirements for how manufacturers of connected devices must 
+          protect user data and device security.</p>
+      </div>
+
+      <div class="info-panel">
+        <span class="law-badge">California</span>
+        <h2 style="margin-top:8px;">California SB-327</h2>
+        <p><strong>Effective:</strong> January 1, 2020</p>
+        <p>
+          California SB-327 was the first IoT security law in the United States. It requires any manufacturer of a connected device sold in California to equip the device 
+          with reasonable security features appropriate to its nature and function. The law specifically targets devices that can connect to the internet and collect,
+           transmit, or store user data. A specific requirement here is that manufacturers must ensure devices either come with a unique password per device or require users 
+           to set their own password on first use.
+        </p>
+        <p>The law does not exactly define what "reasonable security" means, giving manufacturers some flexibility, but the password requirement is concrete and enforceable.</p>
+        <a href="https://leginfo.legislature.ca.gov/faces/billCompareClient.xhtml?bill_id=201720180SB327" target="_blank">
+          <span class="info-btn">View full legislation →</span>
+        </a>
+      </div>
+
+      <div class="info-panel">
+        <span class="law-badge">Oregon</span>
+        <h2 style="margin-top:8px;">Oregon HB 2395</h2>
+        <p><strong>Effective:</strong> January 1, 2020</p>
+        <p>
+          Oregon HB 2395 mirrors CA SB-327's approach and extends similar IoT security requirements to the state of Oregon. It 
+          requires manufacturers of internet-connected devices that collect, transmit, or store personal information about users to provide reasonable security standards, including
+          but not limited to providing preprogrammed passwords or opportunity for the user to create their own password during first booting.
+           Like California SB-327, it addresses the risk of devices being compromised due to weak or shared default credentials.
+        </p>
+        <p>The law applies specifically to devices designed and marketed for consumers rather than industrial or enterprise use.</p>
+        <a href="https://olis.oregonlegislature.gov/liz/2019R1/Downloads/MeasureDocument/HB2395" target="_blank">
+          <span class="info-btn">View full legislation →</span>
+        </a>
+      </div>
+
+      <div class="info-panel">
+        <span class="law-badge">Federal</span>
+        <h2 style="margin-top:8px;">Public Law 116-207 — IoT Cybersecurity Improvement Act of 2020</h2>
+        <p><strong>Effective:</strong> December 4, 2020</p>
+        <p>
+          PL 116-207 is a federal law that establishes minimum cybersecurity standards for IoT devices owned or controlled by the U.S. federal government. Rather than applying to all 
+          manufacturers directly, it works by requiring federal agencies to only purchase IoT devices that meet NIST-defined security standards. This creates strong market pressure on
+           manufacturers who want to sell to government buyers.
+        </p>
+        <p>The law requires NIST to publish guidelines for IoT device security, directs agencies to inventory their connected devices, and establishes vulnerability disclosure policies, 
+        structuring a way for researchers to report security flaws without legal risk.</p>
+        <a href="https://www.congress.gov/116/plaws/publ207/PLAW-116publ207.pdf" target="_blank">
+          <span class="info-btn">View full legislation →</span>
+        </a>
+      </div>
+
+      <div class="info-panel">
+        <span class="law-badge">NIST Standard</span>
+        <h2 style="margin-top:8px;">NISTIR 8259 — Foundational Cybersecurity Activities for IoT Device Manufacturers</h2>
+        <p><strong>Published:</strong> May 2020</p>
+        <p>
+          NISTIR 8259 is not a law but a set of standard practices published by the National Institute of Standards and Technology. It describes the cybersecurity activities that IoT
+           device manufacturers should perform before a device is sold and throughout its supported lifetime. The document is widely cited in legislation and procurement requirements as
+            a baseline standard.
+        </p>
+        <p>It covers six core areas: identifying cybersecurity risks related to the device, protecting device security, detecting cybersecurity events, responding to incidents, 
+          recovering from incidents, and communicating with users about security. These map directly to the compliance classes used in this application's analysis.</p>
+        <a href="https://csrc.nist.gov/pubs/ir/8259/final" target="_blank">
+          <span class="info-btn">View full publication →</span>
+        </a>
+      </div>
+
+    </div><!-- /tab-laws -->
+
+
+    <!-- ═══════════════════════════ ABOUT TAB ═══════════════════════════ -->
+    <div id="tab-about" class="page-section">
+
+      <div class="info-panel">
+        <h2>About This Application</h2>
+        <p>The Privacy Policy Compliance Analyzer is a compliance adherence tool that automatically evaluates how well a company's published privacy policy covers 
+          the requirements of major IoT security laws and standards. It uses a combination of machine learning, knowledge graph reasoning, and a 
+          large language model to produce its analysis.</p>
+      </div>
+
+      <div class="info-panel">
+        <h3 style="margin-top:0;">How it works</h3>
+        <p>When you select a manufacturer, the application retrieves their privacy policy text from the knowledge graph and runs it through two 
+          analysis methods simultaneously:</p>
+
+        <div class="about-grid">
+          <div class="about-card">
+            <h4>Sentence-Transformer Semantic Similarity</h4>
+            <p>A BERT-based sentence-transformer model encodes the policy text and each regulatory compliance class into numerical vectors, then measures 
+              how semantically similar they are. This catches coverage even when the exact legal terminology isn't used.</p>
+          </div>
+          <div class="about-card">
+            <h4>SWRL Rule Reasoning</h4>
+            <p>A set of keyword-to-class rules fires against the policy text. If a policy mentions "authentication" or "unique password", the 
+              reasoner infers that the Authentication class is covered. This catches explicit keyword evidence.</p>
+          </div>
+          <div class="about-card">
+            <h4>Hybrid Confidence Tiers</h4>
+            <p>The two methods are combined into a four-tier confidence rating. HIGH means both BERT and SWRL agree. MEDIUM-BERT means only 
+              semantic similarity confirmed it. MEDIUM-SWRL means only keywords matched. NONE means neither method found evidence.</p>
+          </div>
+          <div class="about-card">
+            <h4>SPARQL Validation</h4>
+            <p>A cross-validation step compares BERT's decisions against keyword matching for every class, computing an agreement rate. This 
+              gives a measure of how consistent and reliable the analysis is for each manufacturer.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="info-panel">
+        <h3 style="margin-top:0;">Knowledge Graph</h3>
+        <p>All manufacturer data, policy text, regulatory class definitions, and law annotations are stored in an OWL ontology. 
+          This is a structured knowledge graph that encodes relationships between manufacturers, laws, and compliance requirements. 
+          The graph is loaded at startup and queried in real time for every analysis. When you add a new manufacturer, they are
+           written directly into this graph.</p>
+      </div>
+
+      <div class="info-panel">
+        <h3 style="margin-top:0;">Privacy Bot</h3>
+        <p>The chatbot on the Home tab is powered by LLaMA 3.3 70B running via the Groq API. The model only has access to 
+          the knowledge graph context built for the selected manufacturer; it cannot browse the internet or access any data outside
+           what is shown in the compliance analysis. Every answer is grounded in the graph.</p>
+      </div>
+
+      <div class="info-panel">
+        <h3 style="margin-top:0;">Coverage score explained</h3>
+        <p>The coverage percentage shown for each law represents what fraction of that law's required compliance classes the manufacturer's
+           policy scores above the similarity threshold. A score of 100% means the policy contains evidence of covering every class 
+           associated with that law. A lower score indicates whats missing, areas the policy does not clearly address.</p>
+        <p>The threshold is set in <code>config.json</code> as <code>coverage_threshold</code>. The default is 0.27, meaning a class 
+          needs at least a 27% similarity score to count as covered.</p>
+      </div>
+
+    </div><!-- /tab-about -->
+
+
+  </div><!-- /container -->
+
+    <script>
+    let historychart = null; 
+
+      // ── Tab switching ──
+          function showTab(name, btn) {
+      document.querySelectorAll('.page-section').forEach(s => s.classList.remove('active'));
+      document.querySelectorAll('.ribbon-tab').forEach(b => b.classList.remove('active'));
+
+      document.getElementById('tab-' + name).classList.add('active');
+      btn.classList.add('active');
     }
-    lower = label.lower().strip()
-    return fixes.get(lower, label)
 
-def generate_manufacturer_iri(name: str) -> URIRef:
-    """Generate a unique IRI for a new manufacturer based on its name."""
-    safe_name = name.lower().replace(" ", "_").replace("&", "and")
-    safe_name = re.sub(r'[^a-z0-9_]', '', safe_name)
-    base_iri = "http://example.org/onto.owl#"
-    return URIRef(f"{base_iri}{safe_name}")
 
-# -------------------- Load graph --------------------
-SWRL_COVERS = URIRef("http://example.org/onto.owl#swrl_covers")
-INFERRED_PATH = ONTO_PATH.parent / "inferred_merged.rdf"
-SWRL_ACTIVE = False
 
-#--#--#
-# --------------------------SWRL Reasoner, parto f validation------------------#
-def run_swrl_reasoner() -> bool:
-    """
-    Manual SWRL-equivalent reasoning using rdflib.
-    Fires keyword rules against policy_description and writes
-    swrl_covers triples into the inferred ontology.
-    Bypasses owlready2 entirely.
-    """
-    try:
-        import shutil
 
-        # SWRL rules — keyword → class IRI mapping
-        SWRL_RULES = [
-            ("authentication",      "http://yourdomain.org/ontology/laws#Authentication"),
-            ("unique password",     "http://yourdomain.org/ontology/laws#Authentication"),
-            ("encrypt",             "http://example.org/onto.owl#Security_Mechanism"),
-            ("unauthorized access", "http://yourdomain.org/ontology/laws#Unauthorized_Access_Element"),
-            ("software update",     "http://yourdomain.org/ontology/laws#Updates"),
-            ("patch",               "http://example.org/onto.owl#PatchAvailability"),
-            ("configuration",       "http://example.org/onto.owl#ConfigurationManagement"),
-            ("data collection",     "http://yourdomain.org/ontology/laws#Data_Collection_Practice"),
-            ("third party",         "http://yourdomain.org/ontology/laws#Data_Sharing_Practice"),
-            ("personal information","http://yourdomain.org/ontology/laws#Personal_Information"),
-            ("network",             "http://example.org/onto.owl#networkInterface"),
-            ("secure development",  "http://example.org/onto.owl#SecureDevelopment"),
-            ("cybersecurity",       "http://example.org/onto.owl#CybersecurityCapability"),
-            ("security standard",   "http://example.org/onto.owl#MinimumSecurityStandards"),
-            ("compliance",          "http://yourdomain.org/ontology/laws#Violation"),
-        ]
 
-        # Load raw ontology into working graph
-        inferred_g = Graph()
-        inferred_g.parse(str(ONTO_PATH))
-        print(f"[swrl] Loaded {len(inferred_g)} triples from raw ontology")
+      // ── Home button ──
+      function goHome() {
+        document.querySelectorAll('.page-section').forEach(s => s.classList.remove('active'));
+        document.querySelectorAll('.ribbon-tab').forEach(b => b.classList.remove('active'));
+        document.getElementById('tab-home').classList.add('active');
+        document.getElementById('tab-btn-home').classList.add('active');
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
 
-        # Fire rules against every manufacturer
-        rules_fired = 0
-        for inst in inferred_g.subjects(RDF.type, MANUFACTURER_CLS):
-            if not isinstance(inst, URIRef):
-                continue
-            policies = [
-                str(o) for o in inferred_g.objects(inst, POLICY_PROP)
-                if isinstance(o, Literal)
-            ]
-            if not policies:
-                continue
-            policy_text = max(policies, key=len).lower()
+      function truncateText(str, maxLen) {
+  if (!str) return "";
+  if (str.length <= maxLen) return str;
+  return str.slice(0, maxLen) + "...";
+}
 
-            for keyword, class_iri in SWRL_RULES:
-                if keyword.lower() in policy_text:
-                    inferred_g.add((
-                        inst,
-                        SWRL_COVERS,
-                        URIRef(class_iri)
-                    ))
-                    rules_fired += 1
+      function el(id){ return document.getElementById(id); }
 
-        print(f"[swrl] Fired {rules_fired} rule inferences")
+      let policyFullText = "";
+      let policyTruncatedText = "";
+      let policyExpanded = false;
 
-        # Save inferred graph
-        inferred_g.serialize(destination=str(INFERRED_PATH), format="xml")
-        print(f"[swrl] Inferred ontology saved → {INFERRED_PATH}")
-        return True
+      const CLASS_THRESHOLD = 0.0; // Matches backend COVERAGE_THRESHOLD
 
-    except Exception as e:
-        print(f"[swrl] Reasoner failed: {e}")
-        return False
+      function makeTruncated(text, maxLen) {
+        if (!text) return "";
+        if (text.length <= maxLen) return text;
+        return text.slice(0, maxLen) + "...";
+      }
 
-#--#--#
-# -------------------- Load rdf graph with SWRL --------------------
-def is_valid_rdf(path: Path) -> bool:
-    """Check if an RDF file exists and is non-empty and parseable."""
-    try:
-        if not path.exists():
-            return False
-        if path.stat().st_size < 100:
-            print(f"[swrl] {path.name} is empty or too small — discarding")
-            path.unlink()
-            return False
-        test = Graph()
-        test.parse(str(path))
-        return len(test) > 0
-    except Exception as e:
-        print(f"[swrl] {path.name} failed validation: {e}")
-        try:
-            path.unlink()
-        except Exception:
-            pass
-        return False
+      function truncateText(str, maxLen) {
+        if (!str) return "";
+        if (str.length <= maxLen) return str;
+        return str.slice(0, maxLen) + "...";
+      }
 
-g = Graph()
-SWRL_ACTIVE = False
+      function statusFromCoverage(pct, numAbove, numClasses) {
+        if (!numClasses || pct === 0 || numAbove === 0) return "Missing";
+        if (pct < 40) return "Partially";
+        if (pct < 80) return "Mostly";
+        return "Fully";
+      }
 
-if is_valid_rdf(INFERRED_PATH):
-    print(f"[load] Loading valid inferred ontology → {INFERRED_PATH}")
-    g.parse(str(INFERRED_PATH))
-    SWRL_ACTIVE = True
-else:
-    print(f"[load] No valid inferred ontology found — attempting SWRL reasoning")
-    success = run_swrl_reasoner()
-    if success and is_valid_rdf(INFERRED_PATH):
-        print(f"[load] Loading freshly inferred ontology → {INFERRED_PATH}")
-        g.parse(str(INFERRED_PATH))
-        SWRL_ACTIVE = True
-    else:
-        print(f"[load] Falling back to raw ontology → {ONTO_PATH}")
-        g.parse(str(ONTO_PATH))
-        SWRL_ACTIVE = False
+      function buildLawSections(desc, stateFilter) {
+  if (!desc) {
+    return {
+      shortHtml: '<div class="law-desc">(no description)</div>',
+      fullHtml: '<div class="law-desc">(no description)</div>'
+    };
+  }
 
-print(f"[swrl] SWRL layer active: {SWRL_ACTIVE}")
+  const pieces = desc.split(/(?<=[.!?])\s+|[\n\r]+|;+/, -1);
+  const oreSegs = [];
+  const caSegs  = [];
+  const niSegs  = [];
+  const plSegs  = [];
 
-# -------------------- Helpers --------------------
-def local_name(iri: str) -> str:
-    """Get a readable local name from a full IRI."""
-    s = iri
-    if "#" in s:
-        s = s.rsplit("#", 1)[1]
-    s = s.rstrip("/").rsplit("/", 1)[-1]
-    s = re.sub(r"([a-z])([A-Z])", r"\1 \2", s)
-    s = s.replace("_", " ").replace("-", " ")
-    return s
+  pieces.forEach(p => {
+    const pl = p.toLowerCase().trim();
+    if (!pl) return;
 
-#----------look
-def get_swrl_covered_classes(manufacturer_iri: str) -> set:
-    """Returns set of class IRIs confirmed by SWRL rules."""
-    if not SWRL_ACTIVE:
-        return set()
-    inst = URIRef(manufacturer_iri)
-    return {str(obj) for obj in g.objects(inst, SWRL_COVERS)}
+    const isOre = pl.includes("oregon hb 2395") || pl.includes("hb 2395") || pl.includes("oregon");
+    const isCa  = pl.includes("california sb-327") || pl.includes("sb-327") || pl.includes("california");
+    const isNi  = pl.includes("nistir 8259") || pl.includes("8259") || pl.includes("nist");
+    const isPl  = pl.includes("PL 116-207") || pl.includes("116-207") || pl.includes("federal");
 
-def get_hybrid_tier(bert_covered: bool, swrl_covered: bool) -> dict:
-    """
-    Returns hybrid confidence tier based on SWRL + BERT agreement.
-    Tier 1: both agree covered       → HIGH
-    Tier 2: SWRL yes, BERT no        → keyword present, weak context
-    Tier 3: BERT yes, SWRL no        → semantic match, no keyword
-    Tier 4: both agree not covered   → confirmed gap
-    """
-    if bert_covered and swrl_covered:
-        return {"tier": 1, "label": "HIGH", "explanation": "Both SWRL and BERT confirm coverage"}
-    elif swrl_covered and not bert_covered:
-        return {"tier": 2, "label": "MEDIUM-SWRL", "explanation": "Keyword present but weak semantic context"}
-    elif bert_covered and not swrl_covered:
-        return {"tier": 3, "label": "MEDIUM-BERT", "explanation": "Semantic match without explicit keyword"}
-    else:
-        return {"tier": 4, "label": "NONE", "explanation": "Confirmed gap — neither method confirms coverage"}
+    if (isOre) oreSegs.push(p.trim());
+    if (isCa) caSegs.push(p.trim());
+    if (isNi) niSegs.push(p.trim());
+    if (isPl) plSegs.push(p.trim());
+  });
 
-def extract_law_segments(value: str):
-    """Extract law-specific segments from text."""
-    segments_by_law = {law["id"]: [] for law in LAWS}
-    if not value:
-        return {}
+  let shortParts = [];
+  let fullParts  = [];
 
-    pieces = re.split(r'(?<=[.!?])\s+|[\n\r]+|;+', value)
-    for piece in pieces:
-        plow = piece.lower().strip()
-        if not plow:
-            continue
-        for law in LAWS:
-            lid = law["id"]
-            for kw in law.get("keywords", []):
-                if kw.lower() in plow:
-                    segments_by_law[lid].append(piece.strip())
-                    break
+  const filter = (stateFilter || 'all').toLowerCase();
+  
+  if ((filter === 'all' || filter === 'oregon') && oreSegs.length) {
+    const joined = oreSegs.join(' ');
+    shortParts.push(`<div class="law-segment"><strong>Oregon HB 2395:</strong> ${truncateText(joined, 150)}</div>`);
+    fullParts.push(`<div class="law-segment"><strong>Oregon HB 2395:</strong> ${joined}</div>`);
+  }
 
-    return {lid: segs for lid, segs in segments_by_law.items() if segs}
+  if ((filter === 'all' || filter === 'california') && caSegs.length) {
+    const joined = caSegs.join(' ');
+    shortParts.push(`<div class="law-segment"><strong>California SB-327:</strong> ${truncateText(joined, 150)}</div>`);
+    fullParts.push(`<div class="law-segment"><strong>California SB-327:</strong> ${joined}</div>`);
+  }
 
-def filter_description_by_laws(description: str, allowed_law_ids: set) -> str:
-        """Filter a description to only include text from specified laws."""
-        if not description or not allowed_law_ids:
-            return description
-    
-    # Law patterns to identify and extract
-        law_patterns = {
-        'CA_SB_327': r'California SB[- ]?327[^.]*\.',
-        'OR_HB_2395': r'Oregon HB[- ]?2395[^.]*\.',
-        'NISTIR_8259': r'NISTIR 8259[^.]*\.',
-        'PL_116-207': r'(?:PL 116-207|Public Law 116-207)[^.]*\.'
-    }
-    
-    # Extract only sentences that mention allowed laws
-        filtered_parts = []
-        for law_id in allowed_law_ids:
-            if law_id in law_patterns:
-                pattern = law_patterns[law_id]
-            matches = re.finditer(pattern, description, re.IGNORECASE)
-            for match in matches:
-                filtered_parts.append(match.group(0))
-    
-        return ' '.join(filtered_parts) if filtered_parts else description
+  if ((filter === 'all' || filter === 'nistir') && niSegs.length) {
+    const joined = niSegs.join(' ');
+    shortParts.push(`<div class="law-segment"><strong>NISTIR 8259:</strong> ${truncateText(joined, 150)}</div>`);
+    fullParts.push(`<div class="law-segment"><strong>NISTIR 8259:</strong> ${joined}</div>`);
+  }
 
-#--#--#
-# -------------------- Build class corpus; builds four parallel lists from owl --------------------
-class_iris = []
-class_labels = []
-class_texts = []
-class_descs = {}
-class_to_laws = {}
+  if ((filter === 'all' || filter === 'plaw') && plSegs.length) {
+    const joined = plSegs.join(' ');
+    shortParts.push(`<div class="law-segment"><strong>Public Law 116-207:</strong> ${truncateText(joined, 150)}</div>`);
+    fullParts.push(`<div class="law-segment"><strong>Public Law 116-207:</strong> ${joined}</div>`);
+  }
 
-for c in g.subjects(RDF.type, OWL.Class):
-    if not isinstance(c, URIRef):
-        continue
+  if (shortParts.length === 0) {
+    const fallback = truncateText(desc, 300);
+    return {
+      shortHtml: `<div class="law-desc">${fallback}</div>`,
+      fullHtml: `<div class="law-desc">${desc}</div>`
+    };
+  }
 
-    c_iri = str(c)
-    law_ids_for_class = set()
-    law_snippets = []
+  return {
+    shortHtml: shortParts.join(''),
+    fullHtml: fullParts.join('')
+  };
+}
 
-    for pred in LAW_PREDICATES:
-        for obj in g.objects(c, pred):
-            text = str(obj)
-            segments_by_law = extract_law_segments(text)
-            for lid, segs in segments_by_law.items():
-                law_ids_for_class.add(lid)
-                law_snippets.extend(segs)
+      async function loadDropdown() {
+        const res = await fetch('/list');
+        const items = await res.json();
+        console.log('Manufacturers loaded:', items);
+        const sel = el('manufacturerSelect');
+        sel.innerHTML = '';
 
-    if not law_ids_for_class:
-        continue
+        if (!items.length){
+          const opt = document.createElement('option');
+          opt.textContent = '(No manufacturers found)';
+          opt.value = '';
+          sel.appendChild(opt);
+          el('countNote').textContent = '';
+          return;
+        }
 
-    labels = [str(o) for o in g.objects(c, RDFS.label)]
-    comments = [str(o) for o in g.objects(c, RDFS.comment)]
+        items.forEach(m => {
+          const opt = document.createElement('option');
+          opt.value = m.iri;
+          opt.textContent = m.name;
+          sel.appendChild(opt);
+        });
 
-    if not labels:
-        labels = [clean_class_label(local_name(c_iri))]
+        el('countNote').textContent = `${items.length} total manufacturer(s)`;
+        sel.value = items[0].iri;
+        loadDetail();
+      }
 
-    label_text = clean_class_label(" / ".join(labels))
-    combined = " ".join(labels + comments + law_snippets + [local_name(c_iri)])
+      async function loadDetail() {
+        const sel = el('manufacturerSelect');
+        const iri = sel.value;
+        if (!iri) return;
 
-    if comments:
-        class_desc = " ".join(comments).strip()
-    else:
-        class_desc = " ".join(law_snippets).strip()
+        const stateFilter = el('stateFilter').value;
 
-    class_iris.append(c_iri)
-    class_labels.append(label_text)
-    class_texts.append(combined)
-    class_descs[c_iri] = class_desc
-    class_to_laws[c_iri] = law_ids_for_class
+        const res = await fetch('/detail?iri=' + encodeURIComponent(iri) + '&state=' + encodeURIComponent(stateFilter));
+        const data = await res.json();
 
-if not class_texts:
-    raise SystemExit("No eligible classes found with law annotations matching configured keywords.")
+        el('details').classList.remove('hidden');
+        el('mName').textContent = data.name || '(no label)';
 
-# -------------------- DEDUPLICATE CLASSES --------------------
-seen = set()
-dedup_iris = []
-dedup_labels = []
-dedup_texts = []
-dedup_descs = {}
-dedup_laws = {}
+        policyFullText = data.policy || '(no policy_description found)';
+        policyTruncatedText = makeTruncated(policyFullText, 500);
+        policyExpanded = false;
 
-for i, c_iri in enumerate(class_iris):
-    label = class_labels[i]
-    clean_label = label.lower().strip()
+        const policyEl = el('policy');
+        const toggleBtn = el('togglePolicy');
 
-    if clean_label in seen:
-        continue
+        if (policyFullText.length > 500) {
+        policyEl.textContent = policyTruncatedText;
+        policyEl.style.maxHeight = '150px';
+        policyEl.style.overflowY = 'hidden';
+        toggleBtn.classList.remove('hidden');
+        toggleBtn.textContent = "Read more";
+          } else {
+          policyEl.textContent = policyFullText;
+          toggleBtn.classList.add('hidden');
+          }
 
-    seen.add(clean_label)
-    dedup_iris.append(c_iri)
-    dedup_labels.append(label)
-    dedup_texts.append(class_texts[i])
-    dedup_descs[c_iri] = class_descs[c_iri]
-    dedup_laws[c_iri] = class_to_laws[c_iri]
-
-class_iris = dedup_iris
-class_labels = dedup_labels
-class_texts = dedup_texts
-class_descs = dedup_descs
-class_to_laws = dedup_laws
-
-# -------------------- Class → laws & law → classes --------------------
-iri_to_idx = {c_iri: idx for idx, c_iri in enumerate(class_iris)}
-law_to_class_idxs = {law["id"]: [] for law in LAWS}
-
-for c_iri, law_ids in class_to_laws.items():
-    idx = iri_to_idx.get(c_iri)
-    if idx is None:
-        continue
-    for lid in law_ids:
-        if lid in law_to_class_idxs:
-            law_to_class_idxs[lid].append(idx)
-
-for law in LAWS:
-    lid = law["id"]
-    print(f"[init] Law {lid} has {len(law_to_class_idxs.get(lid, []))} related classes")
-
-# -------------------- Build manufacturers list --------------------
-manufacturers = []
-for inst in g.subjects(RDF.type, MANUFACTURER_CLS):
-    if not isinstance(inst, URIRef):
-        continue
-    
-    inst_iri = str(inst)
-    user_added = any(g.objects(inst, USER_ADDED_PROP))
-    
-    labels = [str(o) for o in g.objects(inst, RDFS.label)]
-    if not labels:
-        name = clean_manufacturer_name(local_name(inst_iri))
-    else:
-        name = clean_manufacturer_name(labels[0])
-    
-    if name not in ALLOWED_MANUFACTURERS and not user_added:
-        continue
-    
-    policies = [str(o) for o in g.objects(inst, POLICY_PROP) if isinstance(o, Literal)]
-    policy = max(policies, key=len) if policies else ""
-    
-    manufacturers.append({
-        "iri": inst_iri,
-        "name": name,
-        "policy": policy,
-        "user_added": user_added
-    })
-
-manufacturers.sort(key=lambda m: m["name"].lower())
-print(f"[init] Loaded {len(manufacturers)} manufacturers")
-
-#--#--#
-# -------------------- Prepare similarity model --------------------
-if SIMILARITY_METHOD == "tfidf":
-    print("[init] Using TF-IDF similarity")
-    vectorizer = TfidfVectorizer(
-        lowercase=True,
-        stop_words="english",
-        ngram_range=(1, 2),
-        max_features=1000
-    )
-    class_matrix = vectorizer.fit_transform(class_texts)
-
-elif SIMILARITY_METHOD == "bert":
-    print(f"[init] Using BERT embeddings with model: {EMBEDDING_MODEL_NAME}")
-    model = SentenceTransformer(EMBEDDING_MODEL_NAME)
-    class_embeddings = model.encode(
-        class_texts,
-        convert_to_numpy=True,
-        normalize_embeddings=True,
-        show_progress_bar=True
-    )
-
-else:
-    raise ValueError(f"Unknown similarity_method: {SIMILARITY_METHOD}")
-
-#--#--#
-# -------------------- Ranking ---------------------------------------- Ranking --------------------
-def rank_classes_for_policy(policy_text: str, state="all"):
-    """Rank classes by similarity to policy text."""
-    if not policy_text or not policy_text.strip():
-        return [], None
-
-    if SIMILARITY_METHOD == "tfidf":
-        query_vec = vectorizer.transform([policy_text])
-        sims = cosine_similarity(query_vec, class_matrix)[0]
-
-    elif SIMILARITY_METHOD == "bert":
-        q_emb = model.encode(
-            [policy_text],
-            convert_to_numpy=True,
-            normalize_embeddings=True,
-        )[0]
-        sims = np.dot(class_embeddings, q_emb)
-
-    else:
-        raise ValueError(f"Unknown similarity_method: {SIMILARITY_METHOD}")
-
-# Filter laws based on state
-    filtered_laws = LAWS
-    if state != "all":
-        state_lower = state.lower()
-        filtered_laws = []
+        const lawCoverage = data.law_coverage || [];
+        console.log('Law Coverage Data:', lawCoverage);
+        console.log('State Filter:', stateFilter);
+        let overallPct = 0;
+        let coverageLabel = 'Overall Coverage';
         
-        for law in LAWS:
-            law_id_lower = law["id"].lower()
-            law_label_lower = law.get("label", "").lower()
+        overallPct = data.overall || 0;
+        
+        if (stateFilter === 'all') {
+          coverageLabel = 'Overall Coverage';
+        } else if (stateFilter === 'california') {
+          coverageLabel = 'California Legislature Coverage';
+        } else if (stateFilter === 'oregon') {
+          coverageLabel = 'Oregon Legislature Coverage';
+        } else if (stateFilter === 'nistir') {
+          coverageLabel = 'NISTIR Standard Coverage';
+        } else if (stateFilter === 'plaw') {
+          coverageLabel = 'Federal Public Law 116-207 Coverage';
+        }
+        
+        console.log('Using overall from backend:', overallPct);
+
+        el('coverageLabel').textContent = coverageLabel;
+        el('overallPercent').textContent = overallPct.toFixed(1);
+
+        const lawsDiv = el('laws');
+        lawsDiv.innerHTML = '';
+
+        lawCoverage.forEach(law => {
+          const pct = law.coverage_percent || 0;
+          const status = statusFromCoverage(pct, law.num_above, law.num_classes);
+
+          const card = document.createElement('div');
+          card.className = 'card';
+          card.innerHTML = `
+            <div class="card-title">
+              <span class="law-percent">${pct.toFixed(1)}%</span>
+              <span class="law-label-text">${law.label}</span>
+            </div>
+            <div class="chip">
+              <strong>Status:</strong>&nbsp;${status}
+            </div>
+            <div class="chip">
+              <strong>Covered:</strong>&nbsp;${law.num_above} / ${law.num_classes} Rules
+            </div>
+          `;
+          lawsDiv.appendChild(card);
+        });
+
+        // Render live charts from law coverage data
+        renderLiveCharts(lawCoverage);
+
+        if (stateFilter !== 'all') {
+          const classesDiv = el('classes');
+          const classHeader = el('classHeader');
+          classesDiv.innerHTML = '';
+
+          const topClasses = data.covered || [];
+          const INITIAL_COMPLIANT_DISPLAY = 5;
+
+          if (!topClasses.length) {
+            classHeader.style.display = '';
+            classesDiv.innerHTML = '<p class="muted small">No compliant rules found.</p>';
+          } else {
+            classHeader.style.display = '';
             
-            # Match based on state filter
-            if state_lower in law_id_lower or state_lower in law_label_lower:
-                filtered_laws.append(law)
-            elif state_lower == "california" and ("ca" in law_id_lower or "sb-327" in law_id_lower or "sb327" in law_id_lower):
-                filtered_laws.append(law)
-            elif state_lower == "oregon" and ("or" in law_id_lower or "hb-2395" in law_id_lower or "hb2395" in law_id_lower):
-                filtered_laws.append(law)
-            elif state_lower == "nistir" and ("nistir" in law_id_lower or "8259" in law_id_lower):
-                filtered_laws.append(law)
-            elif state_lower == "plaw" and ("pl" in law_id_lower or "116-207" in law_id_lower or "public law" in law_label_lower):
-                filtered_laws.append(law)
+            topClasses.forEach((cls, index) => {
+              const desc = cls.desc || cls.annotation || "";
+              const { shortHtml, fullHtml } = buildLawSections(desc, stateFilter);
 
-        # Get class indices that belong to filtered laws
-    allowed_class_indices = set()
-    if state == "all":
-        allowed_class_indices = set(range(len(class_iris)))
-    else:
-        for law in filtered_laws:
-            lid = law["id"]
-            class_idxs = law_to_class_idxs.get(lid, [])
-            allowed_class_indices.update(class_idxs)
+              const card = document.createElement('div');
+              card.className = 'card';
+              
+              if (index >= INITIAL_COMPLIANT_DISPLAY) {
+                card.classList.add('hidden');
+                card.classList.add('extra-compliant-card');
+              }
+              
+              card.innerHTML = `
+  <div class="card-title">
+    ${cls.class_label}
+    ${cls.hybrid ? `
+      <span style="
+        font-size:11px;
+        padding:2px 7px;
+        border-radius:10px;
+        margin-left:8px;
+        font-weight:500;
+        background:${cls.hybrid.tier === 1 ? '#d4edda' : cls.hybrid.tier === 2 ? '#fff3cd' : '#cce5ff'};
+        color:${cls.hybrid.tier === 1 ? '#155724' : cls.hybrid.tier === 2 ? '#856404' : '#004085'};
+      ">${cls.hybrid.label}</span>
+    ` : ''}
+  </div>
+              <div class="small muted class-desc-short">
+                ${shortHtml}
+              </div>
+              <button class="small-btn linkish class-desc-toggle">Read more</button>
+              <div class="small muted class-desc-full hidden">
+                ${fullHtml}
+              </div>
+            `;
 
-    idxs = [i for i, s in enumerate(sims) if float(s) >= COVERAGE_THRESHOLD and i in allowed_class_indices]
-    idxs.sort(key=lambda i: sims[i], reverse=True)
+              const shortDiv = card.querySelector('.class-desc-short');
+              const fullDiv = card.querySelector('.class-desc-full');
+              const btn = card.querySelector('.class-desc-toggle');
 
-    top_classes = []
-    for i in idxs:
-        c_iri = class_iris[i]
-        sim_score = float(sims[i])
-        
-        # Find which law(s) this class belongs to
-        class_laws = class_to_laws.get(c_iri, set())
-        law_labels = [law["label"] for law in LAWS if law["id"] in class_laws]
-        
-         # Filter description to only show text from filtered laws
-        original_desc = class_descs.get(c_iri, "")
-        filtered_desc = original_desc
-        if state != "all" and class_laws:
-            # Only show description text from laws that match the filter
-            relevant_laws = class_laws.intersection({law["id"] for law in filtered_laws})
-            filtered_desc = filter_description_by_laws(original_desc, relevant_laws)
-        
-        top_classes.append({
-            "class_iri": c_iri,
-            "class_label": class_labels[i],
-            "class_desc": class_descs.get(c_iri, ""),
-            "laws": list(class_laws),
-            "law_labels": law_labels,
-        })
+              if (shortHtml.trim() === fullHtml.trim()) {
+                btn.classList.add('hidden');
+              } else {
+                btn.addEventListener('click', () => {
+                  const showingFull = !fullDiv.classList.contains('hidden');
+                  if (showingFull) {
+                    fullDiv.classList.add('hidden');
+                    shortDiv.classList.remove('hidden');
+                    btn.textContent = 'Read more';
+                  } else {
+                    fullDiv.classList.remove('hidden');
+                    shortDiv.classList.add('hidden');
+                    btn.textContent = 'Show less';
+                  }
+                });
+              }
 
-    return top_classes, sims
+              classesDiv.appendChild(card);
+            });
 
-def compute_law_coverage(sims, state="all"):
-    """Compute coverage per law and which laws are missing entirely."""
-    if sims is None or not LAWS:
-        return [], [law["id"] for law in LAWS], 0.0
-
-    # FIXED: Better state filtering logic
-    filtered_laws = LAWS
-    if state != "all":
-        # Try multiple matching strategies
-        state_lower = state.lower()
-        filtered_laws = []
-        
-        for law in LAWS:
-            law_id_lower = law["id"].lower()
-            law_label_lower = law.get("label", "").lower()
-            
-            # Match if state name appears in ID or label
-            if state_lower in law_id_lower or state_lower in law_label_lower:
-                filtered_laws.append(law)
-            # Also check for common abbreviations
-            elif state_lower == "california" and ("ca" in law_id_lower or "sb-327" in law_id_lower or "sb327" in law_id_lower):
-                filtered_laws.append(law)
-            elif state_lower == "oregon" and ("or" in law_id_lower or "hb-2395" in law_id_lower or "hb2395" in law_id_lower):
-                filtered_laws.append(law)
-            elif state_lower == "nistir" and ("nistir" in law_id_lower or "8259" in law_id_lower):
-                filtered_laws.append(law)
-            elif state_lower == "plaw" and ("pl" in law_id_lower or "116-207" in law_id_lower or "public law" in law_label_lower):
-                filtered_laws.append(law)
-    
-    # DEBUG: Print what laws were found
-    print(f"[DEBUG] State filter: {state}")
-    print(f"[DEBUG] Filtered to {len(filtered_laws)} laws: {[law['id'] for law in filtered_laws]}")
-    
-    # If no laws matched the filter, return 0% coverage
-    if not filtered_laws:
-        print(f"[WARNING] No laws matched state filter '{state}'")
-        return [], [], 0.0
-    
-    law_coverage = []
-    missing_laws = []
-    total_above = 0
-    total_classes = 0
-    
-    for law in filtered_laws:
-        lid = law["id"]
-        class_idxs = law_to_class_idxs.get(lid, [])
-        if not class_idxs:
-            law_coverage.append({
-                "id": lid,
-                "label": law["label"],
-                "coverage_percent": 0.0,
-                "num_classes": 0,
-                "num_above_threshold": 0,
-            })
-            missing_laws.append(lid)
-            continue
-        
-        scores = [float(sims[i]) for i in class_idxs]
-        above = [s for s in scores if s >= COVERAGE_THRESHOLD]
-        coverage_percent = 100.0 * len(above) / len(class_idxs)
-        
-        total_above += len(above)
-        total_classes += len(class_idxs)
-        
-        law_coverage.append({
-            "id": lid,
-            "label": law["label"],
-            "coverage_percent": round(coverage_percent, 2),
-            "num_classes": len(class_idxs),
-            "num_above_threshold": len(above),
-        })
-        
-        if len(above) == 0:
-            missing_laws.append(lid)
-    
-    overall_percent = round(100.0 * total_above / total_classes, 2) if total_classes > 0 else 0.0
-    
-    # DEBUG: Print coverage calculation
-    print(f"[DEBUG] Total classes for filtered laws: {total_classes}")
-    print(f"[DEBUG] Classes above threshold: {total_above}")
-    print(f"[DEBUG] Overall coverage: {overall_percent}%")
-    
-    return law_coverage, missing_laws, overall_percent
-
-def compute_missing_classes(sims, state="all"):
-    """Find missing classes (similarity below threshold)."""
-    if sims is None:
-        return []
-    
-    # FIXED: Use same filtering logic as compute_law_coverage
-    filtered_laws = LAWS
-    if state != "all":
-        state_lower = state.lower()
-        filtered_laws = []
-        
-        for law in LAWS:
-            law_id_lower = law["id"].lower()
-            law_label_lower = law.get("label", "").lower()
-            
-            if state_lower in law_id_lower or state_lower in law_label_lower:
-                filtered_laws.append(law)
-            elif state_lower == "california" and ("ca" in law_id_lower or "sb-327" in law_id_lower or "sb327" in law_id_lower):
-                filtered_laws.append(law)
-            elif state_lower == "oregon" and ("or" in law_id_lower or "hb-2395" in law_id_lower or "hb2395" in law_id_lower):
-                filtered_laws.append(law)
-            elif state_lower == "nistir" and ("nistir" in law_id_lower or "8259" in law_id_lower):
-                filtered_laws.append(law)
-            elif state_lower == "plaw" and ("pl" in law_id_lower or "116-207" in law_id_lower or "public law" in law_label_lower):
-                filtered_laws.append(law)
-    
-    missing = []
-    for law in filtered_laws:
-        lid = law["id"]
-        llabel = law["label"]
-        class_idxs = law_to_class_idxs.get(lid, [])
-        for idx in class_idxs:
-            score = float(sims[idx])
-            if score < COVERAGE_THRESHOLD:
-                c_iri = class_iris[idx]
-
-                # Filter description to only show text from filtered laws
-                original_desc = class_descs.get(c_iri, "")
-                filtered_desc = original_desc
-                if state != "all":
-                    class_laws = class_to_laws.get(c_iri, set())
-                    relevant_laws = class_laws.intersection({law["id"] for law in filtered_laws})
-                    filtered_desc = filter_description_by_laws(original_desc, relevant_laws)
+            if (topClasses.length > INITIAL_COMPLIANT_DISPLAY) {
+              const showMoreBtn = document.createElement('button');
+              showMoreBtn.className = 'show-more-btn';
+              showMoreBtn.textContent = `Show ${topClasses.length - INITIAL_COMPLIANT_DISPLAY} more compliant rules`;
+              showMoreBtn.id = 'showMoreCompliant';
+              
+              showMoreBtn.addEventListener('click', () => {
+                const hiddenCards = classesDiv.querySelectorAll('.extra-compliant-card.hidden');
+                const isExpanded = hiddenCards.length === 0;
                 
-                missing.append({
-                    "class_iri": c_iri,
-                    "class_label": class_labels[idx],
-                    "class_desc": class_descs.get(c_iri, ""),
-                    "law_id": lid,
-                    "law_label": llabel,
-                })
-    return missing
-
-
-#--#--#
-# -------------------- SPARQL Validation --------------------
-def sparql_validate_manufacturer(manufacturer_iri: str, sims) -> dict:
-    """
-    Cross-validates BERT decisions against keyword queries.
-    Returns agreement rate and disagreement breakdown.
-    """
-    if sims is None:
-        return {"error": "No sims", "agreement_rate": 0, "total_pairs": 0,
-                "agreed": 0, "both_covered": 0, "both_not_covered": 0,
-                "bert_only": 0, "sparql_only": 0}
-
-    # Get policy text directly
-    inst = URIRef(manufacturer_iri)
-    policies = [str(o) for o in g.objects(inst, POLICY_PROP)
-                if isinstance(o, Literal)]
-    policy_text = max(policies, key=len).lower() if policies else ""
-
-    if not policy_text:
-        return {"error": "No policy", "agreement_rate": 0, "total_pairs": 0,
-                "agreed": 0, "both_covered": 0, "both_not_covered": 0,
-                "bert_only": 0, "sparql_only": 0}
-
-    # Keyword map defined ONCE outside the loop
-    keyword_map = {
-        "authentication":            ["authentication", "password", "credential", "login", "unique", "verify", "identity"],
-        "unauthorized access":       ["unauthorized", "access control", "breach", "intrusion", "restrict", "prohibited"],
-        "security mechanism":        ["encryption", "encrypt", "secure", "cryptographic", "tls", "ssl", "protect", "safeguard"],
-        "updates":                   ["update", "patch", "upgrade", "firmware", "maintenance", "release", "version"],
-        "patch":                     ["patch", "update", "fix", "vulnerability", "hotfix", "software update"],
-        "configuration management":  ["configuration", "config", "setting", "parameter", "setup", "manage"],
-        "data collection practice":  ["data collection", "collect", "gather", "personal data", "information we collect"],
-        "data sharing practice":     ["third party", "sharing", "disclose", "transfer", "partners", "affiliates", "vendor"],
-        "personal information":      ["personal information", "personal data", "pii", "personally identifiable", "your information"],
-        "network interface":         ["network", "internet", "connectivity", "wifi", "wireless", "bluetooth", "protocol"],
-        "secure development":        ["secure development", "security testing", "vulnerability", "audit", "penetration"],
-        "cybersecurity capability":  ["cybersecurity", "security", "cyber", "protection", "threat", "safeguard"],
-        "minimum security standards":["security standard", "minimum security", "baseline", "comply", "requirement", "standard"],
-        "core baseline":             ["baseline", "minimum", "standard", "requirement", "foundational", "essential"],
-        "iot device":                ["device", "iot", "connected", "sensor", "smart device", "product", "hardware"],
-        "iot platform":              ["platform", "cloud", "service", "infrastructure", "system", "backend", "ecosystem"],
-        "violation":                 ["compliance", "comply", "violation", "enforce", "regulation", "legal", "obligation"],
-        "non compliant":             ["non-compliant", "violation", "breach", "failure", "penalty", "fine"],
-        "cybersecurity risk":        ["risk", "threat", "vulnerability", "exposure", "mitigation", "cyber risk"],
-        "secure software":           ["software", "application", "code", "program", "secure code", "development"],
-        "patch availability":        ["patch", "update available", "security fix", "software patch", "release"],
-        "conventional it device":    ["device", "computer", "server", "hardware", "equipment", "machine"],
-        "transducer":                ["sensor", "transducer", "actuator", "detector", "measurement", "monitor"],
-        "standards":                 ["standard", "nist", "iso", "compliance", "framework", "guideline", "requirement"],
-    }
-
-    agreed = 0
-    total = 0
-    both_covered = 0
-    both_not_covered = 0
-    bert_only = 0
-    sparql_only = 0
-
-    for idx, c_iri in enumerate(class_iris):
-        label = class_labels[idx]
-        raw_label = label.lower().replace("/", " ").strip()
-        bert_score = float(sims[idx])
-        bert_decision = bert_score >= COVERAGE_THRESHOLD
-
-        # Get keywords for this class
-        expanded = keyword_map.get(raw_label, None)
-        if not expanded:
-            for key in keyword_map:
-                if key in raw_label or raw_label in key:
-                    expanded = keyword_map[key]
-                    break
-        if not expanded:
-            words = [w for w in raw_label.split() if len(w) > 3]
-            expanded = words if words else [raw_label[:10]]
-
-        # Search policy text directly using Python string matching
-        sparql_result = any(kw in policy_text for kw in expanded)
-
-        # Count results
-        total += 1
-        if bert_decision == sparql_result:
-            agreed += 1
-
-        if bert_decision and sparql_result:
-            both_covered += 1
-        elif not bert_decision and not sparql_result:
-            both_not_covered += 1
-        elif bert_decision and not sparql_result:
-            bert_only += 1
-        else:
-            sparql_only += 1
-
-    agreement_rate = round(100.0 * agreed / total, 2) if total > 0 else 0.0
-
-    return {
-        "total_pairs": total,
-        "agreed": agreed,
-        "agreement_rate": agreement_rate,
-        "both_covered": both_covered,
-        "both_not_covered": both_not_covered,
-        "bert_only": bert_only,
-        "sparql_only": sparql_only
-    }
-
-#--#--#
-# -------------------- Routes for chat --------------------
-@app.get("/")
-def index():
-    return render_template("index.html")
-
-@app.get("/list")
-def list_instances():
-    """Return all manufacturers for the dropdown."""
-    return jsonify([{"iri": m["iri"], "name": m["name"]} for m in manufacturers])
-
-@app.get("/detail")
-def detail():
-    iri = request.args.get("iri")
-    state = request.args.get("state", "all")
-
-    if not iri:
-        return jsonify({"error": "missing iri"}), 400
-
-    match = next((m for m in manufacturers if m["iri"] == iri), None)
-    if not match:
-        inst = URIRef(iri)
-        labels = [str(o) for o in g.objects(inst, RDFS.label)]
-        name = clean_manufacturer_name(labels[0]) if labels else clean_manufacturer_name(local_name(iri))
-        policies = [str(o) for o in g.objects(inst, POLICY_PROP) if isinstance(o, Literal)]
-        policy = max(policies, key=len) if policies else ""
-        match = {"iri": iri, "name": name, "policy": policy}
-
-    top_classes, sims = rank_classes_for_policy(match["policy"], state)
-    law_coverage, missing_laws, overall_percent = compute_law_coverage(sims, state)
-    missing_classes = compute_missing_classes(sims, state)
-
-    # SWRL hybrid tiers for top classes
-    swrl_covered = get_swrl_covered_classes(iri)
-    for cls in top_classes:
-        bert_covered = True  # already above threshold to be in top_classes
-        swrl_decision = cls["class_iri"] in swrl_covered
-        cls["hybrid"] = get_hybrid_tier(bert_covered, swrl_decision)
-
-    # SPARQL auto-validation — runs on every detail call
-    sparql_validation = sparql_validate_manufacturer(iri, sims)
-
-    return jsonify({
-        "iri": match["iri"],
-        "name": match["name"],
-        "policy": match["policy"],
-        "suggested_classes": top_classes,
-        "law_coverage": law_coverage,
-        "missing_laws": missing_laws,
-        "missing_classes": missing_classes,
-        "overall_coverage": overall_percent,
-        "sparql_validation": sparql_validation,
-        "swrl_active": SWRL_ACTIVE,
-    })
-
-@app.post("/add_manufacturer")
-def add_manufacturer():
-    """Create a new Manufacturer individual in the ontology."""
-    data = request.get_json(force=True) or {}
-
-    name = (data.get("name") or "").strip()
-    policy = (data.get("policy") or "").strip()
-
-    if not name or not policy:
-        return jsonify({"error": "Both name and policy are required."}), 400
-
-    inst_iri = generate_manufacturer_iri(name)
-
-    g.add((inst_iri, RDF.type, MANUFACTURER_CLS))
-    g.add((inst_iri, RDFS.label, Literal(name)))
-    g.add((inst_iri, POLICY_PROP, Literal(policy)))
-    g.add((inst_iri, USER_ADDED_PROP, Literal(True)))
-
-    new_entry = {
-        "iri": str(inst_iri),
-        "name": clean_manufacturer_name(name),
-        "policy": policy,
-        "user_added": True,
-    }
-    manufacturers.append(new_entry)
-    manufacturers.sort(key=lambda m: m["name"].lower())
-
-    try:
-        g.serialize(destination=str(ONTO_PATH), format="xml")
-    except Exception as e:
-        print("[error] Failed to save ontology:", e)
-        return jsonify(
-            {"error": "Manufacturer added in memory, but failed to update ontology file."}
-        ), 500
-
-    return jsonify({"iri": new_entry["iri"], "name": new_entry["name"]}), 201
-
-@app.post("/extract_pdf")
-def extract_pdf():
-    """Accept a PDF upload and return extracted text as JSON."""
-    if "file" not in request.files:
-        return jsonify({"error": "No file field found."}), 400
-
-    f = request.files["file"]
-    if not f or f.filename == "":
-        return jsonify({"error": "No file selected."}), 400
-
-    if not allowed_file(f.filename):
-        return jsonify({"error": "Only PDF files are allowed."}), 400
-
-    filename = secure_filename(f.filename)
-    path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
-    f.save(path)
-
-    try:
-        reader = PdfReader(path)
-        texts = []
-        for page in reader.pages:
-            t = page.extract_text() or ""
-            if t.strip():
-                texts.append(t)
-        extracted = "\n\n".join(texts).strip()
-    except Exception as e:
-        return jsonify({"error": f"Failed to read PDF: {e}"}), 500
-    finally:
-        try:
-            os.remove(path)
-        except Exception:
-            pass
-
-    if not extracted:
-        return jsonify({"error": "No text could be extracted from that PDF (it may be scanned images)."}), 200
-
-    return jsonify({"text": extracted}), 200
-
-     # --- NEW: Agentic analysis step ---
-    analysis = analyze_policy_document(extracted)
-
-    return jsonify({
-        "text": extracted,
-        "analysis": analysis   # structured result alongside raw text
-    }), 200
-
-
-def analyze_policy_document(text: str) -> dict:
-    """
-    Agent step 1: classify and segment an extracted policy document.
-    Makes two sequential Groq calls — classify first, then segment.
-    """
-
-    # --- Call 1: Classify the document type ---
-    classify_prompt = f"""You are a document classifier for IoT privacy compliance.
-
-Given the following document text, determine:
-1. document_type: one of "privacy_policy", "terms_of_service", "security_policy", "legislation", "product_specification", "unknown"
-2. manufacturer_name: the company name if identifiable, or null
-3. confidence: "high", "medium", or "low"
-
-Respond ONLY with valid JSON. No explanation, no markdown.
-
-Document (first 1500 chars):
-{text[:1500]}
-
-JSON:"""
-
-    try:
-        classify_resp = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": classify_prompt}],
-            temperature=0.1,
-            max_tokens=200,
-        )
-        raw = classify_resp.choices[0].message.content.strip()
-        # Strip markdown fences if present
-        raw = raw.replace("```json", "").replace("```", "").strip()
-        classification = json.loads(raw)
-    except Exception as e:
-        classification = {
-            "document_type": "unknown",
-            "manufacturer_name": None,
-            "confidence": "low",
-            "error": str(e)
-        }
-
-    # --- Call 2: Segment into KG-aligned chunks ---
-    # Only attempt segmentation if it looks like a policy document
-    policy_types = {"privacy_policy", "terms_of_service", "security_policy"}
-    if classification.get("document_type") not in policy_types:
-        return {
-            "classification": classification,
-            "segments": [],
-            "note": "Document does not appear to be a policy — skipping segmentation."
-        }
-
-    # Build the list of your KG class labels for the prompt
-    kg_categories = ", ".join(class_labels[:30])  # use your existing class_labels list
-
-    segment_prompt = f"""You are an IoT privacy compliance analyst.
-
-Extract policy segments from the document below and map each to one of these compliance categories:
-{kg_categories}
-
-Return a JSON array. Each item must have:
-- "category": exact category name from the list above
-- "excerpt": a short quote (under 40 words) from the document supporting this category
-- "confidence": "high", "medium", or "low"
-
-Only include categories that are clearly evidenced in the text.
-Respond ONLY with a valid JSON array. No explanation, no markdown.
-
-Document (first 3000 chars):
-{text[:3000]}
-
-JSON array:"""
-
-    try:
-        segment_resp = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": segment_prompt}],
-            temperature=0.1,
-            max_tokens=1000,
-        )
-        raw2 = segment_resp.choices[0].message.content.strip()
-        raw2 = raw2.replace("```json", "").replace("```", "").strip()
-        segments = json.loads(raw2)
-        if not isinstance(segments, list):
-            segments = []
-    except Exception as e:
-        segments = []
-
-    return {
-        "classification": classification,
-        "segments": segments
-    }
-
-@app.get("/sparql_validate_all")
-def sparql_validate_all():
-    """
-    Run SPARQL vs BERT cross-validation for ALL manufacturers.
-    Use this to generate your paper's agreement rate table.
-    """
-    results = []
-    for m in manufacturers:
-        _, sims = rank_classes_for_policy(m["policy"], "all")
-        if sims is None:
-            continue
-        result = sparql_validate_manufacturer(m["iri"], sims)
-        result["name"] = m["name"]
-        results.append(result)
-
-    # Compute overall agreement rate across all manufacturers
-    total_pairs = sum(r["total_pairs"] for r in results)
-    total_agreed = sum(r["agreed"] for r in results)
-    overall_rate = round(
-        100.0 * total_agreed / total_pairs, 2
-    ) if total_pairs > 0 else 0.0
-
-    return jsonify({
-        "overall_agreement_rate": overall_rate,
-        "total_pairs_evaluated": total_pairs,
-        "total_agreed": total_agreed,
-        "manufacturers": results
-    }), 200
-
-# ------------------------------------------------------------------aliases--------------------------------------------------------------------------
-def expand_question_with_aliases(question: str) -> str:
-    """Expand user questions with domain-specific aliases."""
-    aliases = {
-        # Password & Authentication
-        "password": "password authentication credential login unique default",
-        "login": "login authentication credential password access",
-        "credential": "credential password authentication login",
-        "auth": "authentication credential password login verification",
-        
-        # Updates & Patching
-        "update": "update patch upgrade firmware software maintenance",
-        "patch": "patch update upgrade fix software",
-        "upgrade": "upgrade update patch firmware software",
-        
-        # Encryption & Security
-        "encryption": "encryption encrypted secure crypto cryptographic protect",
-        "encrypt": "encryption encrypted secure crypto cryptographic",
-        "secure": "secure security encryption encrypted protection",
-        "security": "security cybersecurity protection secure safe mechanism",
-        
-        # Data & Privacy
-        "data protection": "data protection privacy security information safeguard compliance",
-        "data privacy": "data privacy protection information personal confidential",
-        "personal data": "personal data privacy information user sensitive",
-        "data collection": "data collection gathering information privacy personal",
-        "data": "data information privacy collection personal user",
-        "privacy": "privacy data information personal protection collection",
-        "personal protection": "personal data privacy information user",
-        "collection": "collection data information gathering privacy",
-        "protection": "protection security safeguard privacy data secure",
-        
-        # Network & Communication
-        "network": "network communication interface connectivity protocol",
-        "communication": "communication network interface connectivity protocol",
-        "interface": "interface network communication connectivity",
-        
-        # Device & IoT
-        "device": "device iot connected smart thing sensor transducer",
-        "iot": "iot device connected smart internet things",
-        "sensor": "sensor device transducer iot measurement",
-        "smart": "smart iot device connected intelligent",
-        
-        # Access & Control
-        "access control": "access control permission authorization authentication security",
-        "access": "access control permission authorization authentication",
-        "control": "control access management permission authorization",
-    }
-    
-    expanded = question.lower()
-    
-    # Sort by length (longest first) to match multi-word phrases before single words
-    sorted_keys = sorted(aliases.keys(), key=len, reverse=True)
-    
-    for key in sorted_keys:
-        if key in expanded:
-            expanded += " " + aliases[key]
-    
-    return expanded
-
-def detect_question_intent(question: str) -> str:
-    """Detects what kind of question the user is asking."""
-    q = question.lower()
-
-    if any(w in q for w in [
-        "compare", "versus", "vs", "better", "worse", "difference"
-    ]):
-        return "compare"
-
-    if any(w in q for w in [
-        "missing", "gap", "fail", "lack", "not cover",
-        "improve", "fix", "add to"
-    ]):
-        return "missing"
-
-    if any(w in q for w in [
-        "score", "percent", "coverage", "how much",
-        "overall", "compliant", "compliance"
-    ]):
-        return "score"
-
-    if any(w in q for w in [
-        "what is", "explain", "what does", "require",
-        "mean", "define", "describe"
-    ]):
-        return "explain"
-
-    if any(w in q for w in [
-        "which law", "what law", "under what", "which regulation"
-    ]):
-        return "law_lookup"
-
-    if any(w in q for w in [
-        "how many", "list", "all manufacturers", "which companies"
-    ]):
-        return "general_kg"
-
-    return "class_search"  # default — falls through to BERT
-
-
-def route_chat_by_intent(
-    intent: str,
-    question: str,
-    manufacturer: dict,
-    sims
-) -> str:
-    """
-    Returns a dynamic answer string based on detected intent.
-    Returns None if intent is class_search — lets existing
-    BERT matching in /chat handle it instead.
-    """
-    name = manufacturer["name"]
-
-    if intent == "score":
-        law_coverage, _, overall = compute_law_coverage(
-            sims, "all"
-        )
-        breakdown = ", ".join([
-            f"{lc['label']}: {lc['coverage_percent']}%"
-            for lc in law_coverage
-        ])
-        return (
-            f"{name} has an overall compliance score of "
-            f"{overall}%. Breakdown by law: {breakdown}."
-        )
-
-    elif intent == "missing":
-        missing = compute_missing_classes(sims, "all")
-        if not missing:
-            return (
-                f"{name} has no missing compliance classes "
-                f"above the current threshold."
-            )
-        items = "\n".join([
-            f"• {m['class_label']} ({m['law_label']})"
-            for m in missing[:5]
-        ])
-        return (
-            f"{name} is missing {len(missing)} requirements. "
-            f"Top gaps:\n{items}"
-        )
-
-    elif intent == "general_kg":
-        return (
-            f"The knowledge graph contains "
-            f"{len(manufacturers)} manufacturers, "
-            f"{len(class_iris)} regulatory classes, "
-            f"and {len(LAWS)} laws: "
-            f"{', '.join(law['label'] for law in LAWS)}."
-        )
-
-    elif intent == "law_lookup":
-        for law in LAWS:
-            if law["label"].lower() in question.lower():
-                idxs = law_to_class_idxs.get(law["id"], [])
-                classes = [class_labels[i] for i in idxs[:5]]
-                return (
-                    f"{law['label']} covers "
-                    f"{len(idxs)} regulatory classes "
-                    f"including: {', '.join(classes)}."
-                )
-        return (
-            "Please specify which law you are asking about. "
-            f"Available laws: "
-            f"{', '.join(law['label'] for law in LAWS)}."
-        )
-
-    return None  # class_search let BERT handle it
-
-#--#--#--!
-def build_kg_context(question: str, manufacturer: dict, sims) -> str:
-
-    rdf_graph = Graph()
-    rdf_graph.parse(
-        "checkertest\\data\\knowledge_graph_n8259a\\inferred_merged.rdf",
-        format="xml"
-    )
-
-    inst = URIRef(manufacturer["iri"])
-    name = manufacturer["name"]
-
-    subgraph = Graph()
-
-    subgraph.bind("owl",  OWL)
-    subgraph.bind("rdfs", RDFS)
-    subgraph.bind("rdf",  RDF)
-    subgraph.bind("ex",   URIRef("http://example.org/onto.owl#"))
-
-    # manuf triples
-    for pred, obj in rdf_graph.predicate_objects(inst):
-        subgraph.add((inst, pred, obj))
-
-    # law annot triples
-    SWRL_COVERS_PRED = URIRef("http://example.org/onto.owl#swrl_covers")
-    for c in rdf_graph.subjects(RDF.type, OWL.Class):
-        # Class type declaration
-        subgraph.add((c, RDF.type, OWL.Class))
-        # Labels
-        for obj in rdf_graph.objects(c, RDFS.label):
-            subgraph.add((c, RDFS.label, obj))
-        # Law annotation predicates
-        for pred in LAW_PREDICATES:
-            for obj in rdf_graph.objects(c, pred):
-                subgraph.add((c, pred, obj))
-        # SWRL coverage triples where this manufacturer covers this class
-        if (inst, SWRL_COVERS_PRED, c) in rdf_graph:
-            subgraph.add((inst, SWRL_COVERS_PRED, c))
-
-    # serialization in turtle rdf format
-    raw_rdf_turtle = subgraph.serialize(format="turtle")
-
-    # etc metrics
-    law_coverage, _, overall = compute_law_coverage(sims, "all")
-    coverage_lines = "\n".join([
-        f"  {lc['label']}: {lc['coverage_percent']}% "
-        f"({lc['num_above_threshold']}/{lc['num_classes']} classes)"
-        for lc in law_coverage
-    ])
-    missing = compute_missing_classes(sims, "all")
-    missing_lines = "\n".join([
-        f"  - {m['class_label']} ({m['law_label']})"
-        for m in missing[:10]
-    ]) or "  None"
-
-    context = f"""
-FILE READ: checkertest\\data\\knowledge_graph_n8259a\\inferred_merged.rdf
-TOTAL TRIPLES IN FILE: {len(rdf_graph)}
-MANUFACTURER: {name}
-MANUFACTURER IRI: {inst}
-OVERALL COMPLIANCE SCORE: {overall}%
-
-LAW COVERAGE BREAKDOWN:
-{coverage_lines}
-
-NON-COMPLIANT AREAS / GAPS:
-{missing_lines}
-
-RAW RDF TRIPLES FROM inferred_merged.rdf (Turtle format):
-{raw_rdf_turtle}
-"""
-    return context.strip()
-
-
-groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
-
-#--#--# reads raw triples
-def ask_llm(question: str, kg_context: str) -> str:
-    try:
-        response = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {
-                    "role": "system",
-                    "content": """You are a friendly IoT privacy compliance assistant helping 
-non-technical users understand how well a company protects customer data.
-
-YOUR ONLY DATA SOURCE: The RDF triples provided below were read directly from:
-checkertest\\data\\knowledge_graph_n8259a\\inferred_merged.rdf
-You must answer exclusively from these triples. Do not use any outside knowledge,
-training data assumptions, or information not present in the RDF context provided.
-If the answer cannot be found in the provided RDF triples, say so explicitly.
-
-When answering questions:
-- Never use technical terms like 'class', 'ontology', 'IRI', 'triple', or 'node'
-- Instead of 'class' say 'requirement' or 'area'
-- Instead of 'Cybersecurity Capability' say 'cybersecurity protections'
-- Instead of 'Patch Availability' say 'keeping software up to date'
-- Instead of 'IoT Platform' say 'connected device platform security'
-- Instead of 'Configuration Management' say 'device settings security'
-- Instead of 'networkInterface' say 'network security'
-- Instead of 'PatchAvailability' say 'software update practices'
-- Explain what each missing requirement actually means in plain English
-- Reference laws by their common name: 'California privacy law',
-  'Oregon security law', 'federal IoT security law', or 'NIST guidelines'
-- Keep answers conversational and easy to understand
-- Answer ONLY from the RDF triples read from checkertest\\data\\knowledge_graph_n8259a\\inferred_merged.rdf
-- Do not make up information not present in those triples
-- Keep all answers to 3 sentences maximum
-- No analogies or metaphors. just state the facts directly"""
-                },
-                {
-                    "role": "user",
-                    "content": f"""RDF KNOWLEDGE GRAPH CONTEXT (read directly from checkertest\\data\\knowledge_graph_n8259a\\inferred_merged.rdf):
-{kg_context}
-
-QUESTION: {question}
-
-Answer using only the RDF triples above. Plain English, no technical background assumed.
-ANSWER:"""
+                if (isExpanded) {
+                  const extraCards = classesDiv.querySelectorAll('.extra-compliant-card');
+                  extraCards.forEach(card => card.classList.add('hidden'));
+                  showMoreBtn.textContent = `Show ${topClasses.length - INITIAL_COMPLIANT_DISPLAY} more compliant rules`;
+                } else {
+                  hiddenCards.forEach(card => card.classList.remove('hidden'));
+                  showMoreBtn.textContent = 'Show less';
                 }
-            ],
-            temperature=0.3,
-            max_tokens=512,
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        return f"Chat service error: {str(e)}"
+              });
+              
+              classesDiv.appendChild(showMoreBtn);
+            }
+          }
 
+          const missingDiv = el('missingClasses');
+          const missingHeader = el('missingHeader');
+          missingDiv.innerHTML = '';
 
-@app.post("/chat")
-def chat():
+          const rawMissing = data.missing || [];
 
-    data = request.get_json(force=True) or {}
-    question = (data.get("question") or "").strip()
-    iri = (data.get("iri") or "").strip()
+          const missingByClass = new Map();
+          rawMissing.forEach(mc => {
+            const key = mc.class_label;
+            if (!missingByClass.has(key)) {
+              missingByClass.set(key, mc);
+            }
+          });
 
-    if not question or not iri:
-        return jsonify({"answer": "Please select a manufacturer and ask a question."}), 400
+          const missingClasses = Array.from(missingByClass.values());
+          const INITIAL_MISSING_DISPLAY = 5;
 
-    match = next((m for m in manufacturers if m["iri"] == iri), None)
-    if not match:
-        return jsonify({"answer": "Manufacturer not found."}), 404
+          if (!missingClasses.length) {
+            missingHeader.style.display = '';
+            missingDiv.innerHTML = '<p class="muted small">There are no non-compliant issues with this policy.</p>';
+          } else {
+            missingHeader.style.display = '';
+            missingDiv.style.display = '';
+            
+            missingClasses.forEach((mc, index) => {
+              const desc = mc.desc || mc.annotation || "";
+              const { shortHtml, fullHtml } = buildLawSections(desc, stateFilter);
 
-    # Get BERT sims for this manufacturer
-    _, sims = rank_classes_for_policy(match["policy"], "all")
-    if sims is None:
-        return jsonify({"answer": "Could not analyze this manufacturer's policy."}), 500
+              const card = document.createElement('div');
+              card.className = 'card';
+              
+              if (index >= INITIAL_MISSING_DISPLAY) {
+                card.classList.add('hidden');
+                card.classList.add('extra-missing-card');
+              }
+              
+              card.innerHTML = `
+              <div class="card-title">${mc.class_label}</div>
+              <div class="small muted class-desc-short">
+                ${shortHtml}
+              </div>
+              <div class="small muted class-desc-full hidden">
+                ${fullHtml}
+              </div>
+              <button class="small-btn linkish class-desc-toggle">Read more</button>
+              <div class="chip">
+                <strong>Law:</strong>&nbsp;${mc.law_label || mc.law_id || ''}
+              </div>
+            `;
 
-    # Build KG context and send to LLaMA3
-    kg_context = build_kg_context(question, match, sims)
-    answer = ask_llm(question, kg_context)
+              const shortDiv = card.querySelector('.class-desc-short');
+              const fullDiv = card.querySelector('.class-desc-full');
+              const btn = card.querySelector('.class-desc-toggle');
 
-    return jsonify({
-        "answer": answer,
-        "show_card": False,
-        "data_source": f"inferred_merged.rdf — SWRL active: {SWRL_ACTIVE}, {len(g)} triples loaded"
-    }), 200
+              if (shortHtml.trim() === fullHtml.trim()) {
+                btn.classList.add('hidden');
+              } else {
+                btn.addEventListener('click', () => {
+                  const showingFull = !fullDiv.classList.contains('hidden');
+                  if (showingFull) {
+                    fullDiv.classList.add('hidden');
+                    shortDiv.classList.remove('hidden');
+                    btn.textContent = 'Read more';
+                  } else {
+                    fullDiv.classList.remove('hidden');
+                    shortDiv.classList.add('hidden');
+                    btn.textContent = 'Show less';
+                  }
+                });
+              }
 
-@app.get("/compare")
-def compare():
-    iri1 = request.args.get("iri1")
-    iri2 = request.args.get("iri2")
-    state = request.args.get("state", "all")
+              missingDiv.appendChild(card);
+            });
 
-    m1 = next((m for m in manufacturers if m["iri"] == iri1), None)
-    m2 = next((m for m in manufacturers if m["iri"] == iri2), None)
-
-    if not m1 or not m2:
-        return jsonify({"error": "One or both manufacturers not found"}), 404
-
-    _, sims1 = rank_classes_for_policy(m1["policy"], state)
-    _, sims2 = rank_classes_for_policy(m2["policy"], state)
-
-    coverage1, _, overall1 = compute_law_coverage(sims1, state)
-    coverage2, _, overall2 = compute_law_coverage(sims2, state)
-
-    missing1 = compute_missing_classes(sims1, state)
-    missing2 = compute_missing_classes(sims2, state)
-
-    # Find classes one covers but the other doesn't
-    covered1_iris = {
-        class_iris[i] for i in range(len(class_iris))
-        if sims1 is not None and float(sims1[i]) >= COVERAGE_THRESHOLD
-    }
-    covered2_iris = {
-        class_iris[i] for i in range(len(class_iris))
-        if sims2 is not None and float(sims2[i]) >= COVERAGE_THRESHOLD
-    }
-
-    m1_advantage = [
-        class_labels[class_iris.index(iri)]
-        for iri in covered1_iris - covered2_iris
-    ]
-    m2_advantage = [
-        class_labels[class_iris.index(iri)]
-        for iri in covered2_iris - covered1_iris
-    ]
-
-    return jsonify({
-        "manufacturer1": {
-            "name": m1["name"],
-            "overall": overall1,
-            "law_coverage": coverage1,
-            "missing_count": len(missing1),
-            "advantages_over_other": m1_advantage[:5]
-        },
-        "manufacturer2": {
-            "name": m2["name"],
-            "overall": overall2,
-            "law_coverage": coverage2,
-            "missing_count": len(missing2),
-            "advantages_over_other": m2_advantage[:5]
+            if (missingClasses.length > INITIAL_MISSING_DISPLAY) {
+              const showMoreBtn = document.createElement('button');
+              showMoreBtn.className = 'show-more-btn';
+              showMoreBtn.textContent = `Show ${missingClasses.length - INITIAL_MISSING_DISPLAY} more non-compliant rules`;
+              showMoreBtn.id = 'showMoreMissing';
+              
+              showMoreBtn.addEventListener('click', () => {
+                const hiddenCards = missingDiv.querySelectorAll('.extra-missing-card.hidden');
+                const isExpanded = hiddenCards.length === 0;
+                
+                if (isExpanded) {
+                  const extraCards = missingDiv.querySelectorAll('.extra-missing-card');
+                  extraCards.forEach(card => card.classList.add('hidden'));
+                  showMoreBtn.textContent = `Show ${missingClasses.length - INITIAL_MISSING_DISPLAY} more non-compliant rules`;
+                } else {
+                  hiddenCards.forEach(card => card.classList.remove('hidden'));
+                  showMoreBtn.textContent = 'Show less';
+                }
+              });
+              
+              missingDiv.appendChild(showMoreBtn);
+            }
+          }
+        } else {
+          el('classes').innerHTML = '';
+          el('missingClasses').innerHTML = '';
+          el('classHeader').style.display = 'none';
+          el('missingHeader').style.display = 'none';
         }
-    })
+      }
 
+      async function addManufacturer() {
+        const nameInput = el('newName');
+        const policyInput = el('newPolicy');
+        const statusEl = el('addStatus');
 
-if __name__ == "__main__":
-    import os
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)
+        if (!nameInput || !policyInput || !statusEl) {
+          return;
+        }
+
+        const name = nameInput.value.trim();
+        const policy = policyInput.value.trim();
+        statusEl.textContent = "";
+
+        if (!name || !policy) {
+          statusEl.textContent = "Please enter both a name and a policy description.";
+          return;
+        }
+
+        try {
+          const res = await fetch("/add_manufacturer", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name, policy })
+          });
+          const data = await res.json();
+
+          if (!res.ok) {
+            statusEl.textContent = data.error || "Error adding manufacturer.";
+            return;
+          }
+
+          statusEl.textContent = `${data.name} added successfully.`;
+          nameInput.value = "";
+          policyInput.value = "";
+          await loadDropdown();
+
+        } catch (err) {
+          console.error(err);
+          statusEl.textContent = "Network/server error adding manufacturer.";
+        }
+      }
+
+      async function extractPdfToPolicy() {
+        const fileInput = el('pdfFile');
+        const statusEl = el('pdfStatus');
+        const policyBox = el('newPolicy');
+
+        statusEl.textContent = "";
+
+        if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+          statusEl.textContent = "Please choose a PDF file first.";
+          return;
+        }
+
+        const file = fileInput.files[0];
+        const formData = new FormData();
+        formData.append("file", file);
+
+        try {
+          statusEl.textContent = "Extracting text...";
+          const res = await fetch("/extract_pdf", {
+            method: "POST",
+            body: formData
+          });
+
+          const data = await res.json();
+
+          if (!res.ok) {
+            statusEl.textContent = data.error || "Error extracting PDF text.";
+            return;
+          }
+
+          if (data.error && !data.text) {
+            statusEl.textContent = data.error;
+            return;
+          }
+
+          const extracted = (data.text || "").trim();
+          if (!extracted) {
+            statusEl.textContent = "No text extracted.";
+            return;
+          }
+
+          policyBox.value = extracted;
+          statusEl.textContent = `Extracted ${extracted.length.toLocaleString()} characters into the policy box.`;
+        } catch (err) {
+          console.error(err);
+          statusEl.textContent = "Network/server error extracting PDF.";
+        }
+      }
+
+      el('togglePolicy').onclick = function () {
+        const policyEl = el('policy');
+        const toggleBtn = el('togglePolicy');
+
+        if (!policyExpanded) {
+          policyEl.textContent = policyFullText;
+          policyEl.style.overflow = 'auto';
+          toggleBtn.textContent = "Show less";
+          policyExpanded = true;
+        } else {
+          policyEl.textContent = policyTruncatedText;
+          policyEl.style.overflow = 'hidden';
+          toggleBtn.textContent = "Read more";
+          policyExpanded = false;
+        }
+      };
+
+      function toggleLauncherPanel(showId, hideId) {
+        const show = document.getElementById(showId);
+        const hide = document.getElementById(hideId);
+        const isOpen = !show.classList.contains('hidden');
+        hide.classList.add('hidden');
+        if (isOpen) {
+          show.classList.add('hidden');
+        } else {
+          show.classList.remove('hidden');
+        }
+      }
+
+      el('btnLoad').onclick = loadDetail;
+
+      let barChartInstance   = null;
+
+      function renderLiveCharts(lawCoverage) {
+        const row = el('chartsRow');
+        if (!lawCoverage || !lawCoverage.length) {
+          if (row) row.style.display = 'none';
+          return;
+        }
+        if (row) row.style.display = '';
+
+        const labels  = lawCoverage.map(l => l.label);
+        const covered = lawCoverage.map(l => l.num_above || 0);
+        const gaps    = lawCoverage.map(l => (l.num_classes || 0) - (l.num_above || 0));
+
+        // ── Bar chart ──
+        const barCanvas = el('barChart');
+        if (barChartInstance) { barChartInstance.destroy(); barChartInstance = null; }
+        barChartInstance = new Chart(barCanvas, {
+          type: 'bar',
+          data: {
+            labels: labels,
+            datasets: [
+              {
+                label: 'Compliant',
+                data: covered,
+                backgroundColor: 'rgba(89,161,79,0.8)',
+                borderColor: 'rgba(89,161,79,1)',
+                borderWidth: 1,
+                borderRadius: 4
+              },
+              {
+                label: 'Gap',
+                data: gaps,
+                backgroundColor: 'rgba(225,87,89,0.75)',
+                borderColor: 'rgba(225,87,89,1)',
+                borderWidth: 1,
+                borderRadius: 4
+              }
+            ]
+          },
+          options: {
+            responsive: true,
+            plugins: {
+              legend: { position: 'top', labels: { font: { size: 12 }, color: '#333' } }
+            },
+            scales: {
+              x: { stacked: false, ticks: { color: '#555', font: { size: 11 } }, grid: { display: false } },
+              y: { beginAtZero: true, ticks: { color: '#555', stepSize: 1 }, grid: { color: '#eee' },
+                   title: { display: true, text: 'Rules', color: '#555', font: { size: 11 } } }
+            }
+          }
+        });
+      }
+
+      el('btnLoad').onclick = loadDetail;
+      el('manufacturerSelect').addEventListener('change', loadDetail);
+      el('btnAdd').onclick = addManufacturer;
+      el('btnExtractPdf').onclick = extractPdfToPolicy;
+      el('stateFilter').addEventListener('change', loadDetail);
+
+      loadDropdown();
+
+      // Dark mode toggle
+      const darkModeToggle = el('darkModeToggle');
+      const body = document.body;
+
+      if (localStorage.getItem('darkMode') === 'enabled') {
+        body.classList.add('dark-mode');
+        darkModeToggle.textContent = 'Light';
+      }
+
+      darkModeToggle.onclick = function() {
+        body.classList.toggle('dark-mode');
+        
+        if (body.classList.contains('dark-mode')) {
+          darkModeToggle.textContent = 'Light';
+          localStorage.setItem('darkMode', 'enabled');
+        } else {
+          darkModeToggle.textContent = 'Dark';
+          localStorage.setItem('darkMode', 'disabled');
+        }
+      };
+
+      async function sendChat() {
+  const input = el('chatInput');
+  const chatBox = el('chatBox');
+  const statusEl = el('chatStatus');
+  const question = input.value.trim();
+  const iri = el('manufacturerSelect').value;
+
+  if (!question) return;
+  if (!iri) {
+    statusEl.textContent = "Please select a manufacturer first.";
+    return;
+  }
+
+  const placeholder = el('chatPlaceholder');
+  if (placeholder) placeholder.remove();
+  
+  const userMsg = document.createElement('div');
+  userMsg.style.display = 'flex';
+  userMsg.style.justifyContent = 'flex-end';
+  userMsg.style.marginBottom = '12px';
+  const stateVal = el('stateFilter').value;
+  const stateLabel = el('stateFilter').options[el('stateFilter').selectedIndex].text;
+  const stateTag = stateVal !== 'all' ? ` <span style="font-size:10px;background:rgba(0,0,0,0.15);padding:1px 6px;border-radius:8px;">${stateLabel}</span>` : '';
+  userMsg.innerHTML = `
+    <div style="background: #007bff; color: white; padding: 10px 14px; border-radius: 18px; max-width: 70%; word-wrap: break-word; font-style:normal;">
+     ${question}${stateTag}
+    </div>
+  `;
+  chatBox.appendChild(userMsg);
+  
+  input.value = "";
+  statusEl.textContent = "Thinking...";
+
+  try {
+    const res = await fetch("/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question, iri, state: el('stateFilter').value })
+    });
+    const data = await res.json();
+
+    console.log("Full response:", data);
+
+    const botMsgContainer = document.createElement('div');
+    botMsgContainer.style.display = 'flex';
+    botMsgContainer.style.justifyContent = 'flex-start';
+    botMsgContainer.style.marginBottom = '12px';
+    
+    const botMsg = document.createElement('div');
+    botMsg.style.background = '#e9ecef';
+    botMsg.style.color = '#333';
+    botMsg.style.padding = '10px 14px';
+    botMsg.style.borderRadius = '18px';
+    botMsg.style.maxWidth = '70%';
+    botMsg.style.wordWrap = 'break-word';
+    botMsg.innerHTML = ` ${data.answer}`;
+    
+    botMsgContainer.appendChild(botMsg);
+    chatBox.appendChild(botMsgContainer);
+
+    chatBox.scrollTop = chatBox.scrollHeight;
+    statusEl.textContent = "";
+  } catch (err) {
+    console.error("Error:", err);
+    statusEl.textContent = "Error reaching the server.";
+  }
+}
+
+    </script>
+
+  <!-- ═══════════════════ FLOATING PRIVACY BOT ═══════════════════ -->
+  <style>
+    #privacyBotWidget {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      z-index: 9999;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 10px;
+    }
+    #privacyBotPanel {
+      width: 360px;
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.22);
+      overflow: hidden;
+      transition: max-height 0.3s cubic-bezier(.4,0,.2,1), opacity 0.3s;
+      max-height: 520px;
+      opacity: 1;
+      display: flex;
+      flex-direction: column;
+    }
+    #privacyBotPanel.bot-collapsed {
+      max-height: 0;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .bot-header {
+      background: #1a1a2e;
+      color: #fff;
+      padding: 12px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-weight: 700;
+      font-size: 15px;
+      flex-shrink: 0;
+    }
+    .bot-header span { font-size: 13px; font-weight: 400; color: rgba(255,255,255,0.7); }
+    .bot-minimize-btn {
+      background: rgba(255,255,255,0.15);
+      border: none;
+      color: #fff;
+      border-radius: 6px;
+      padding: 2px 10px;
+      cursor: pointer;
+      font-size: 18px;
+      line-height: 1.2;
+      transition: background 0.15s;
+    }
+    .bot-minimize-btn:hover { background: rgba(255,255,255,0.28); }
+    #chatBox {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px;
+      background: #f5f5f5;
+      min-height: 200px;
+      max-height: 300px;
+    }
+    .bot-input-row {
+      display: flex;
+      gap: 6px;
+      padding: 10px 12px;
+      background: #fff;
+      border-top: 1px solid #eee;
+      flex-shrink: 0;
+    }
+    .bot-input-row input {
+      flex: 1;
+      padding: 7px 10px;
+      border-radius: 8px;
+      border: 1px solid #ddd;
+      font-size: 13px;
+      outline: none;
+    }
+    .bot-input-row input:focus { border-color: #1a1a2e; }
+    .bot-input-row button {
+      padding: 7px 14px;
+      border-radius: 8px;
+      background: #1a1a2e;
+      color: #fff;
+      border: none;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .bot-input-row button:hover { background: #2e2e5e; }
+    #chatStatus { font-size: 11px; color: #888; padding: 2px 12px 6px; background: #fff; }
+    #privacyBotFab {
+      width: 52px;
+      height: 52px;
+      border-radius: 50%;
+      background: #1a1a2e;
+      border: none;
+      color: #fff;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      cursor: pointer;
+      box-shadow: 0 4px 18px rgba(0,0,0,0.28);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.15s, transform 0.15s;
+      flex-shrink: 0;
+    }
+    #privacyBotFab:hover { background: #2e2e5e; transform: scale(1.08); }
+
+    /* ── Fullscreen mode ── */
+    #privacyBotWidget.bot-fullscreen {
+      bottom: 0;
+      right: 0;
+      width: 100vw;
+      height: 100vh;
+      gap: 0;
+    }
+    #privacyBotWidget.bot-fullscreen #privacyBotPanel {
+      width: 100%;
+      height: 100%;
+      max-height: 100vh;
+      border-radius: 0;
+      flex: 1;
+    }
+    #privacyBotWidget.bot-fullscreen #chatBox {
+      max-height: none;
+      flex: 1;
+    }
+    #privacyBotWidget.bot-fullscreen #privacyBotFab {
+      display: none;
+    }
+    .bot-fullscreen-btn {
+      background: rgba(255,255,255,0.15);
+      border: none;
+      color: #fff;
+      border-radius: 6px;
+      padding: 2px 9px;
+      cursor: pointer;
+      font-size: 14px;
+      line-height: 1.4;
+      transition: background 0.15s;
+      margin-right: 4px;
+    }
+    .bot-fullscreen-btn:hover { background: rgba(255,255,255,0.28); }
+  </style>
+
+  <div id="privacyBotWidget">
+    <div id="privacyBotPanel">
+      <div class="bot-header">
+        Privacy Bot
+        <span>Ask about compliance</span>
+        <div style="display:flex;align-items:center;gap:4px;">
+          <button class="bot-fullscreen-btn" onclick="toggleBotFullscreen()" id="botFullscreenBtn" title="Fullscreen">&#x26F6;</button>
+          <button class="bot-minimize-btn" onclick="toggleBot()" title="Minimize">&#8722;</button>
+        </div>
+      </div>
+      <div id="chatBox">
+        <p style="color:#aaa; font-size:13px; margin:0;" id="chatPlaceholder">Your conversation will appear here...</p>
+      </div>
+      <div class="bot-input-row">
+        <input id="chatInput" type="text" placeholder="e.g. Does Ring cover unique passwords?" />
+        <button id="btnChat">Ask</button>
+      </div>
+      <div id="chatStatus"></div>
+    </div>
+    <button id="privacyBotFab" onclick="toggleBot()" title="Toggle Privacy Bot">BOT</button>
+  </div>
+
+  <script>
+    function toggleBot() {
+      document.getElementById('privacyBotPanel').classList.toggle('bot-collapsed');
+    }
+
+    function toggleBotFullscreen() {
+      const widget = document.getElementById('privacyBotWidget');
+      const btn = document.getElementById('botFullscreenBtn');
+      const isFullscreen = widget.classList.toggle('bot-fullscreen');
+      btn.title = isFullscreen ? 'Exit Fullscreen' : 'Fullscreen';
+      btn.innerHTML = isFullscreen ? '&#x2715;' : '&#x26F6;';
+      // Scroll chat to bottom after layout change
+      const chatBox = document.getElementById('chatBox');
+      setTimeout(() => { chatBox.scrollTop = chatBox.scrollHeight; }, 50);
+    }
+
+    document.getElementById('btnChat').onclick = sendChat;
+    document.getElementById('chatInput').addEventListener('keydown', e => {
+      if (e.key === 'Enter') sendChat();
+    });
+  </script>
+
+  </body>
+</html>
