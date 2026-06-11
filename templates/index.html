@@ -373,7 +373,7 @@
       </div>
 
       <!-- Manufacturer Panel -->
-      <div id="mfgPanel" class="panel" style="margin-bottom:24px;">
+      <div id="mfgPanel" class="panel hidden" style="margin-bottom:24px;">
         <h3 style="margin-top:0; margin-bottom:16px;">Manufacturer Selection</h3>
         <label for="manufacturerSelect"><strong>Select Manufacturer:</strong></label>
         <div class="row" style="margin-top:8px;">
@@ -390,19 +390,33 @@
           <input id="newName" type="text" placeholder="e.g., Apple"
                  style="width:100%; padding:6px 8px; margin-top:4px; border-radius:8px; border:1px solid var(--border);" />
         </div>
-        <div class="field" style="margin-top: 12px;">
-          <label for="newPolicy"><strong>Policy description</strong></label>
-          <textarea id="newPolicy" rows="4"
-            placeholder="Paste the relevant privacy policy text here"
-            style="width:100%; padding:6px 8px; margin-top:4px; border-radius:8px; border:1px solid var(--border);"></textarea>
+
+        <button id="btnAdd" style="margin-top: 12px;">Classify</button>
+        <div class="small muted" style="margin-top:8px;">
+          Type only the company name. The application will automatically find the official privacy policy statemnt online, and classify it.
         </div>
-        <div class="field" style="margin-top: 12px;">
-          <label for="pdfFile"><strong>Upload policy PDF (optional)</strong></label>
-          <input id="pdfFile" type="file" accept="application/pdf" style="display:block; margin-top:6px;" />
-          <button id="btnExtractPdf" type="button" style="margin-top:8px;">Extract text from PDF</button>
-          <div id="pdfStatus" class="small muted" style="margin-top: 6px;"></div>
-        </div>
-        <button id="btnAdd" style="margin-top: 12px;">Save Manufacturer</button>
+
+        <details id="policyFallbackDetails"
+          style="margin-top: 12px; background:#f8f9fa; border:1px solid #e0e0e0; border-radius:10px; padding:10px 12px;">
+          <summary style="cursor:pointer; font-weight:700; color:#1a1a2e;">
+            Privacy Policy Manual Import (Select If Not Available Online)
+          </summary>
+
+          <div class="field" style="margin-top: 12px;">
+            <label for="newPolicy"><strong>Policy description manual input</strong></label>
+            <textarea id="newPolicy" rows="4"
+              placeholder="Optional: paste policy text only if automatic discovery fails or if not available online.."
+              style="width:100%; padding:6px 8px; margin-top:4px; border-radius:8px; border:1px solid var(--border);"></textarea>
+          </div>
+
+          <div class="field" style="margin-top: 12px;">
+            <label for="pdfFile"><strong>Upload policy PDF</strong></label>
+            <input id="pdfFile" type="file" accept="application/pdf" style="display:block; margin-top:6px;" />
+            <button id="btnExtractPdf" type="button" style="margin-top:8px;">Extract text from PDF</button>
+            <div id="pdfStatus" class="small muted" style="margin-top: 6px;"></div>
+          </div>
+        </details>
+
         <div id="addStatus" class="small muted" style="margin-top: 8px;"></div>
       </div>
 
@@ -432,7 +446,6 @@
             <option value="">— choose a regulation —</option>
             <option value="california">California SB-327</option>
             <option value="oregon">Oregon HB 2395</option>
-            <option value="texas">Texas HB 4</option>
             <option value="nistir">NISTIR 8259</option>
             <option value="plaw">Federal PL 116-207</option>
           </select>
@@ -465,7 +478,6 @@
             <option value="all">All Regulations</option>
             <option value="california">California</option>
             <option value="oregon">Oregon</option>
-            <option value="texas">Texas</option>
             <option value="nistir">NISTIR 8259</option>
             <option value="plaw">Federal PL 116-207</option>
           </select>
@@ -647,14 +659,6 @@
   </div><!-- /container -->
 
     <script>
-    console.log("MAIN INDEX JS IS RUNNING - patched");
-    window.addEventListener("error", function(e) {
-      console.error("JS ERROR:", e.message, "line:", e.lineno, "file:", e.filename);
-    });
-    window.addEventListener("unhandledrejection", function(e) {
-      console.error("PROMISE ERROR:", e.reason);
-    });
-
     let historychart = null; 
 
       // ── Tab switching ──
@@ -785,14 +789,7 @@
 }
 
       async function loadDropdown() {
-        console.log('Loading manufacturers from /list...');
         const res = await fetch('/list');
-        if (!res.ok) {
-          const text = await res.text();
-          console.error('LIST FAILED:', res.status, text);
-          alert('Could not load manufacturers. /list returned status ' + res.status);
-          return;
-        }
         const items = await res.json();
         console.log('Manufacturers loaded:', items);
         const sel = el('manufacturerSelect');
@@ -814,11 +811,9 @@
           sel.appendChild(opt);
         });
 
-        el('countNote').textContent = `${items.length} total manufacturer(s). Pick one and click Classify to run the analysis.`;
+        el('countNote').textContent = `${items.length} total manufacturer(s)`;
         sel.value = items[0].iri;
-        // Do NOT auto-run /detail on page load. On Render this can trigger a heavy
-        // BERT scoring request before the page finishes loading and cause 502s.
-        // The user controls when analysis runs by clicking the Classify button.
+        loadDetail();
       }
 
       async function loadDetail() {
@@ -827,18 +822,9 @@
         if (!iri) return;
 
         const stateFilter = el('stateFilter').value;
-        const countNote = el('countNote');
-        if (countNote) countNote.textContent = 'Running analysis... please wait.';
 
         const res = await fetch('/detail?iri=' + encodeURIComponent(iri) + '&state=' + encodeURIComponent(stateFilter));
-        if (!res.ok) {
-          const text = await res.text();
-          console.error("DETAIL FAILED:", res.status, text);
-          alert("Backend /detail failed with status " + res.status + ". Check Render logs.");
-          return;
-        }
         const data = await res.json();
-        if (countNote) countNote.textContent = 'Analysis loaded.';
 
         el('details').classList.remove('hidden');
         el('mName').textContent = data.name || '(no label)';
@@ -875,8 +861,6 @@
           coverageLabel = 'California Legislature Coverage';
         } else if (stateFilter === 'oregon') {
           coverageLabel = 'Oregon Legislature Coverage';
-        } else if (stateFilter === 'texas') {
-          coverageLabel = 'Texas Legislature Coverage';
         } else if (stateFilter === 'nistir') {
           coverageLabel = 'NISTIR Standard Coverage';
         } else if (stateFilter === 'plaw') {
@@ -1119,46 +1103,71 @@
       }
 
       async function addManufacturer() {
-        const nameInput = el('newName');
-        const policyInput = el('newPolicy');
-        const statusEl = el('addStatus');
+  const nameInput = el('newName');
+  const policyInput = el('newPolicy');
+  const statusEl = el('addStatus');
 
-        if (!nameInput || !policyInput || !statusEl) {
-          return;
-        }
+  const name = nameInput.value.trim();
+  const fallbackPolicy = policyInput ? policyInput.value.trim() : "";
 
-        const name = nameInput.value.trim();
-        const policy = policyInput.value.trim();
-        statusEl.textContent = "";
+  statusEl.textContent = "";
 
-        if (!name || !policy) {
-          statusEl.textContent = "Please enter both a name and a policy description.";
-          return;
-        }
+  if (!name) {
+    statusEl.textContent = "Please enter a manufacturer name.";
+    return;
+  }
 
-        try {
-          const res = await fetch("/add_manufacturer", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name, policy })
-          });
-          const data = await res.json();
+  try {
+    statusEl.textContent = "Finding official privacy policy online and saving manufacturer...";
 
-          if (!res.ok) {
-            statusEl.textContent = data.error || "Error adding manufacturer.";
-            return;
-          }
+    let res;
+    let data;
 
-          statusEl.textContent = `${data.name} added successfully.`;
-          nameInput.value = "";
-          policyInput.value = "";
-          await loadDropdown();
+    if (fallbackPolicy) {
+      // Manual fallback if user opened the fallback box and pasted policy text.
+      res = await fetch("/add_manufacturer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, policy: fallbackPolicy })
+      });
+    } else {
+      // Main name-only agentic flow.
+      res = await fetch("/auto_add_manufacturer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name })
+      });
+    }
 
-        } catch (err) {
-          console.error(err);
-          statusEl.textContent = "Network/server error adding manufacturer.";
-        }
-      }
+    const raw = await res.text();
+    try {
+      data = JSON.parse(raw);
+    } catch (e) {
+      statusEl.textContent = `Server returned non-JSON response. HTTP ${res.status}: ${raw.slice(0, 300)}`;
+      return;
+    }
+
+    if (!res.ok) {
+      statusEl.textContent = data.error || "Error adding manufacturer.";
+      return;
+    }
+
+    statusEl.textContent = `${data.name} added and classified.`;
+    nameInput.value = "";
+    if (policyInput) policyInput.value = "";
+
+    await loadDropdown();
+
+    if (data.iri) {
+      el('manufacturerSelect').value = data.iri;
+      await loadDetail();
+    }
+
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = "Network/server error adding manufacturer.";
+  }
+}
 
       async function extractPdfToPolicy() {
         const fileInput = el('pdfFile');
@@ -1301,6 +1310,27 @@
       el('stateFilter').addEventListener('change', loadDetail);
 
       loadDropdown();
+
+      // Dark mode toggle
+      const darkModeToggle = el('darkModeToggle');
+      const body = document.body;
+
+      if (localStorage.getItem('darkMode') === 'enabled') {
+        body.classList.add('dark-mode');
+        darkModeToggle.textContent = 'Light';
+      }
+
+      darkModeToggle.onclick = function() {
+        body.classList.toggle('dark-mode');
+        
+        if (body.classList.contains('dark-mode')) {
+          darkModeToggle.textContent = 'Light';
+          localStorage.setItem('darkMode', 'enabled');
+        } else {
+          darkModeToggle.textContent = 'Dark';
+          localStorage.setItem('darkMode', 'disabled');
+        }
+      };
 
       async function sendChat() {
   const input = el('chatInput');
