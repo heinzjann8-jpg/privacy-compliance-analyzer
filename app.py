@@ -1,17 +1,3 @@
-"""
-app.py — IoT Privacy Policy Compliance Analyzer
-================================================
-Single-source-of-truth architecture:
-
-  compute_scores(policy, state)  →  one dict with sims + flat + weighted scores
-       ↓                                    ↓
-  /detail sends it to the browser      /chat uses the same dict to build the
-  (UI renders weighted + flat)          LLM context → chatbot matches the UI
-
-KG access: thin SPARQL reads (rdfs:label, rdfs:comment, hasLaw annotations). //analyze more scores*****U&**&*&**&**&
-No intermediate text blobs.  No alias expansion.
-"""
-
 import re, os, json, hashlib
 from pathlib import Path
 from functools import lru_cache
@@ -29,6 +15,7 @@ import step4a_timestamps as ts
 import step4b_regulation_update as reg_update
 import step1_add_regulation as reg_add
 import step3_agentic_weighted_grader as wgrader
+import agentic_policy_update_crawler as policy_crawler
 
 # =============================================================================
 # FLASK
@@ -792,6 +779,54 @@ def manufacturer_history():
     return jsonify(ts.get_policy_history(g, URIRef(iri), POLICY_PROP))
 
 
+
+
+@app.post("/check_company_policy_update")
+def check_company_policy_update():
+    """
+    Agentic policy-only crawler.
+    Checks a live company privacy policy URL before scoring.
+    If the live policy date is newer than the KG policy date, the KG
+    policy_description is updated through step4a_timestamps.upsert_policy().
+    No legislation/regulation update logic runs here.
+    """
+    data = request.get_json(force=True) or {}
+    iri = (data.get("iri") or "").strip()
+    policy_url = (data.get("policy_url") or "").strip()
+    force_llm = bool(data.get("force_llm", False))
+
+    if not iri or not policy_url:
+        return jsonify({"error": "iri and policy_url are required"}), 400
+
+    mfg = next((m for m in manufacturers if m["iri"] == iri), None)
+    if not mfg:
+        return jsonify({"error": "Manufacturer not found."}), 404
+
+    try:
+        report = policy_crawler.check_and_update_company_policy(
+            g=g,
+            manufacturer_iri=URIRef(iri),
+            policy_prop=POLICY_PROP,
+            policy_url=policy_url,
+            company_name=mfg["name"],
+            timestamp_module=ts,
+            ontology_path=str(ONTO_PATH),
+            llm_client=groq_client,
+            force_llm=force_llm,
+        )
+
+        # If the KG was refreshed, keep the in-memory manufacturer list in sync
+        # so /detail and /chat score the updated policy immediately.
+        if report.get("status") == "updated":
+            pols = [str(o) for o in g.objects(URIRef(iri), POLICY_PROP) if isinstance(o, Literal)]
+            if pols:
+                mfg["policy"] = max(pols, key=len)
+
+        return jsonify(report), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.post("/detect_states")
 def detect_states():
     data   = request.get_json(force=True) or {}
@@ -823,6 +858,107 @@ def weighted_grade_trigger():
         return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+#1
+@app.post("/auto_add_manufacturer")
+def auto_add_manufacturer():
+    """
+    Name-only manufacturer add flow.
+
+    User enters only a manufacturer name.
+    The crawler searches for the official privacy policy online,
+    extracts the policy text, saves the manufacturer into the KG,
+    and then the frontend can classify it.
+    """
+    data = request.get_json(force=True) or {}
+    name = (data.get("name") or "").strip()
+
+    if not name:
+        return jsonify({"error": "manufacturer name required"}), 400
+
+    try:
+        crawler_report = policy_crawler.fetch_live_policy_for_company_name(
+            company_name=name,
+            llm_client=groq_client,
+        )
+
+        if not crawler_report.get("ok"):
+            return jsonify({
+                "error": crawler_report.get(
+                    "error",
+                    "Could not find a reliable official privacy policy URL for this manufacturer name."
+                ),
+                "crawler_report": crawler_report,
+            }), 404
+
+        policy_text = (crawler_report.get("policy_text") or "").strip()
+        if not policy_text:
+            return jsonify({
+                "error": "Crawler found a page but could not extract readable policy text.",
+                "crawler_report": crawler_report,
+            }), 500
+
+        existing = _find_mfg(name)
+        inst_iri = URIRef(existing["iri"]) if existing else _gen_iri(name)
+
+        if not existing:
+            g.add((inst_iri, RDF.type, MFG_CLS))
+            g.add((inst_iri, RDFS.label, Literal(name)))
+            g.add((inst_iri, USER_ADDED_PROP, Literal(True)))
+
+        ts_info = ts.upsert_policy(g, inst_iri, POLICY_PROP, policy_text)
+
+        auto = state_detector.detect_states_from_text(policy_text)
+        states = [s["id"] for s in auto["detected"]]
+
+        for old in list(g.objects(inst_iri, APPLIES_TO_STATE_PROP)):
+            g.remove((inst_iri, APPLIES_TO_STATE_PROP, old))
+        for sid in states:
+            g.add((inst_iri, APPLIES_TO_STATE_PROP, Literal(sid)))
+
+        # Optional: store discovered policy URL in KG.
+        discovered_url = crawler_report.get("final_url") or crawler_report.get("policy_url")
+        if discovered_url:
+            POLICY_URL_PROP = URIRef("http://example.org/onto.owl#policy_url")
+            for old in list(g.objects(inst_iri, POLICY_URL_PROP)):
+                g.remove((inst_iri, POLICY_URL_PROP, old))
+            g.add((inst_iri, POLICY_URL_PROP, Literal(discovered_url)))
+
+        entry = {
+            "iri": str(inst_iri),
+            "name": clean_name(name),
+            "policy": policy_text,
+            "user_added": True,
+        }
+
+        if existing:
+            manufacturers[:] = [m for m in manufacturers if m["iri"] != str(inst_iri)]
+        manufacturers.append(entry)
+        manufacturers.sort(key=lambda m: m["name"].lower())
+
+        g.serialize(destination=str(ONTO_PATH), format="xml")
+
+        return jsonify({
+            "iri": entry["iri"],
+            "name": entry["name"],
+            "action": ts_info["action"],
+            "created_at": ts_info["created_at"],
+            "modified_at": ts_info["modified_at"],
+            "policy_length": len(policy_text),
+            "discovered_policy_url": discovered_url,
+            "auto_detected_states": auto,
+            "selected_states": states,
+            "applicable_laws": state_detector.applicable_laws(states, LAWS),
+            "crawler_report": crawler_report,
+        }), 200 if existing else 201
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+        }), 500
 
 
 if __name__ == "__main__":
