@@ -577,9 +577,26 @@ def _search_result_score(company_name: str, url: str, title: str = "", snippet: 
     host = urllib.parse.urlparse(low_url).netloc.replace("www.", "")
     joined = f"{low_url} {low_title} {low_snip}"
 
+#score apparatus
     score = 0
+    if ".us" in low_url:
+        score += 5
+    if "us." in low_url:
+        score += 5
+    if "/us/" in low_url:
+        score += 5
+    if "/pages/privacy-policy" in low_url:
+        score += 3
     if "privacy" in low_url:
         score += 5
+    if any(x in low_url for x in (
+            "/eu/",
+            "/uk/",
+            "/en-gb/",
+            "europe",
+            "gdpr",
+        )):
+        score -= 10
     if "privacy policy" in joined or "privacy notice" in joined or "privacy statement" in joined:
         score += 5
     if slug and slug in host.replace(".", ""):
@@ -598,20 +615,18 @@ def _search_result_score(company_name: str, url: str, title: str = "", snippet: 
         score -= 3
     return score
 
-#3
-def web_search_privacy_policy_urls(company_name: str, max_results: int = 10) -> list[dict[str, Any]]:
-    """
-    Real web-search discovery from a dynamic manufacturer name using Brave Search API.
+#thehint
+INDUSTRY_HINT = "IoT connected device manufacturer"
 
-    This replaces the old DuckDuckGo/Bing HTML scraping.
-    """
+
+def web_search_privacy_policy_urls(company_name: str, max_results: int = 10) -> list[dict[str, Any]]:
     api_key = os.environ.get("BRAVE_SEARCH_API_KEY")
     if not api_key:
         raise RuntimeError("BRAVE_SEARCH_API_KEY is not set")
 
     queries = [
-        f"{company_name} official privacy policy",
-        f"{company_name} privacy policy",
+        f"{company_name} {INDUSTRY_HINT} official privacy policy",
+        f"{company_name} {INDUSTRY_HINT} privacy policy",
         f"{company_name} privacy notice",
         f"{company_name} privacy statement",
     ]
@@ -665,14 +680,41 @@ def web_search_privacy_policy_urls(company_name: str, max_results: int = 10) -> 
                 ),
             })
 
-    by_url = {}
+        by_url = {}
     for r in results:
         if not r.get("url"):
             continue
         if r["url"] not in by_url or r["search_score"] > by_url[r["url"]]["search_score"]:
             by_url[r["url"]] = r
 
-    ranked = sorted(by_url.values(), key=lambda r: r["search_score"], reverse=True)
+    # -----------------------------
+    # Remove EU/GDPR-specific pages
+    # -----------------------------
+    EU_HINTS = (
+        "/eu/",
+        "/eea/",
+        "/uk/",
+        "/en-gb/",
+        "europe",
+        "gdpr",
+        "privacy.eufy.com/eu",
+    )
+
+    filtered = [
+        r for r in by_url.values()
+        if not any(h in r["url"].lower() for h in EU_HINTS)
+    ]
+
+    # Only use the filtered list if we still have results.
+    if filtered:
+        ranked = sorted(filtered, key=lambda r: r["search_score"], reverse=True)
+    else:
+        ranked = sorted(by_url.values(), key=lambda r: r["search_score"], reverse=True)
+
+        print("\n=== Ranked Candidate URLs ===")
+    for r in ranked:
+        print(r["search_score"], r["url"])
+    print("=============================\n")
 
     return [r for r in ranked if r.get("search_score", 0) >= 3][:max_results]
 
@@ -860,6 +902,14 @@ Return exactly:
     if selected not in valid_urls:
         selected = None
         confidence = "none"
+
+        print("\n========== LLM URL SELECTION ==========")
+    print(f"Company: {company_name}")
+    print(f"Selected URL: {selected}")
+    print(f"Confidence: {confidence}")
+    print(f"Reason: {data.get('reason')}")
+    print("=======================================\n")
+
 
     return {
         "selected_policy_url": selected,
