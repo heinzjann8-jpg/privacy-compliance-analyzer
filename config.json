@@ -43,14 +43,6 @@
         "foundational cybersecurity",
         "IoT device manufacturers"
       ]
-    },
-    {
-      "id": "TX_HB_4",
-      "label": "Texas HB 4",
-      "keywords": [
-        "Texas HB 4",
-        "TX HB 4"
-      ]
     }
   ],
     "coverage_threshold": 0.27,
