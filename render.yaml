@@ -1,0 +1,43 @@
+# render.yaml
+# Deploys two things on Render:
+#   1. The existing Flask web service (privacy-compliance-app)
+#   2. A separate Cron Job that runs step5_biannual_refresh.py on a schedule
+#
+# IMPORTANT: Cron Jobs run as their own short-lived instance — they do NOT
+# depend on the web service being awake. This is intentional; see the notes
+# in step5_biannual_refresh.py for why an in-process background thread does
+# not work reliably on Render (sleep/restart resets any in-memory timer).
+#
+# After pushing this file, go to your Render dashboard and "New Blueprint"
+# (or it will pick this up automatically if render.yaml is already linked
+# to your repo) to create both resources.
+
+services:
+  - type: web
+    name: privacy-compliance-app
+    runtime: python
+    plan: hobby      
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "gunicorn app:app --workers 1 --timeout 120"
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false      
+      - key: BRAVE_SEARCH_API_KEY
+        sync: false
+      - key: ONTO_PATH
+        sync: false      
+
+  - type: cron
+    name: biannual-policy-refresh
+    runtime: python
+    plan: free          
+    buildCommand: "pip install -r requirements.txt"
+    schedule: "0 0 1 */1 *"
+    startCommand: "python step5_biannual_refresh.py --run"
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: BRAVE_SEARCH_API_KEY
+        sync: false
+      - key: ONTO_PATH
+        sync: false
