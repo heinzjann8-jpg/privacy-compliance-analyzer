@@ -312,6 +312,17 @@
         .about-grid { grid-template-columns: 1fr; }
         .ribbon-logo { display: none; }
       }
+
+      /* ── Fix background gradient tiling/seam ──
+         The page gradient (defined in style.css) was repeating/tiling as the
+         page scrolled past one viewport height, producing a hard seam partway
+         down the page. Pinning it as a fixed, non-repeating, cover-sized
+         backdrop makes it span the whole page smoothly with no visible seam. */
+      html, body {
+        background-repeat: no-repeat !important;
+        background-attachment: fixed !important;
+        background-size: cover !important;
+      }
     </style>
   </head>
   <body>
@@ -804,6 +815,11 @@
           return;
         }
 
+        const placeholder = document.createElement('option');
+        placeholder.value = '';
+        placeholder.textContent = '-- Select a manufacturer --';
+        sel.appendChild(placeholder);
+
         items.forEach(m => {
           const opt = document.createElement('option');
           opt.value = m.iri;
@@ -812,8 +828,8 @@
         });
 
         el('countNote').textContent = `${items.length} total manufacturer(s)`;
-        sel.value = items[0].iri;
-        loadDetail();
+        sel.value = '';
+        el('details').classList.add('hidden');
       }
 
       async function loadDetail() {
