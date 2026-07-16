@@ -166,6 +166,7 @@ class GraphWriteSession:
         )
         stored_date = policy_crawler.get_stored_company_date(self.g, self.manufacturer_iri)
         decision = policy_crawler.compare_policy_dates(stored_date, live_date)
+        checked_at = ts.mark_checked(self.g, self.manufacturer_iri)
 
         if not decision["should_update"]:
             return {
@@ -378,6 +379,7 @@ def run_agentic_discovery_and_update(
     else:
         trace.append({"step": max_steps, "type": "step_limit_reached"})
 
+    checked_at = ts.mark_checked(g, manufacturer_iri)
     # Serialize the graph to disk ONLY if a write actually happened — no
     # point re-saving an unchanged file, and it keeps "did we touch disk"
     # easy to reason about from the return value alone.
@@ -407,6 +409,7 @@ def run_agentic_discovery_and_update(
         "serialized_to_disk": serialized,
         "write_result": session.write_result,
         "finish_summary": finish_summary,
+        "checked_at": checked_at, 
         "reasoning_trace": trace,
         "audit_entry": audit_entry,
     }
