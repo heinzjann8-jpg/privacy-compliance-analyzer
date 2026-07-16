@@ -413,6 +413,8 @@ def check_and_update_company_policy(
     )
     stored_date = get_stored_company_date(g, manufacturer_iri)
     decision = compare_policy_dates(stored_date, live_date)
+    checked_at = timestamp_module.mark_checked(g, manufacturer_iri)
+
 
     if not decision["should_update"]:
         action = "No KG update was made."
