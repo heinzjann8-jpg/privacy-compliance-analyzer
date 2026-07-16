@@ -32,11 +32,24 @@ from rdflib import Graph, URIRef, Literal, RDF, RDFS, XSD
 # ---------------------------------------------------------------
 DCTERMS_CREATED = URIRef("http://purl.org/dc/terms/created")
 DCTERMS_MODIFIED = URIRef("http://purl.org/dc/terms/modified")
-
+DATE_CHECKED_PRED = URIRef("http://example.org/onto.owl#dateChecked")
 # Custom predicate to keep a copy of the previous policy text so the
 # demo can show "here's what it was before, here's what it is now".
 PREV_POLICY_PRED = URIRef("http://example.org/onto.owl#hasPreviousPolicy")
 
+def mark_checked(g: Graph, manufacturer_iri: URIRef) -> str:
+    """
+    Stamp/refresh dateChecked on a manufacturer whenever the agent looks
+    at their live policy — regardless of whether it decides an update is
+    warranted. Unlike dcterms:modified, this fires on EVERY check, not
+    just on writes, so you can answer "when did we last look?" separately
+    from "when did we last actually change something?".
+    """
+    now = Literal(_now_iso(), datatype=XSD.dateTime)
+    for old in list(g.objects(manufacturer_iri, DATE_CHECKED_PRED)):
+        g.remove((manufacturer_iri, DATE_CHECKED_PRED, old))
+    g.add((manufacturer_iri, DATE_CHECKED_PRED, now))
+    return str(now)
 
 def _now_iso() -> str:
     """Return an ISO-8601 UTC timestamp, e.g. 2026-04-22T14:30:00+00:00"""
@@ -114,12 +127,14 @@ def get_policy_history(g: Graph, manufacturer_iri: URIRef, policy_prop: URIRef) 
     current = list(g.objects(manufacturer_iri, policy_prop))
     created = list(g.objects(manufacturer_iri, DCTERMS_CREATED))
     modified = list(g.objects(manufacturer_iri, DCTERMS_MODIFIED))
+    checked = list(g.objects(manufacturer_iri, DATE_CHECKED_PRED))
     previous = [str(o) for o in g.objects(manufacturer_iri, PREV_POLICY_PRED)]
 
     return {
         "current_policy": str(current[0]) if current else None,
         "created_at": str(created[0]) if created else None,
         "modified_at": str(modified[0]) if modified else None,
+        "checked_at": str(checked[0]) if checked else None,
         "previous_policies": previous,
     }
 
