@@ -1,7 +1,7 @@
 import re, os, json, hashlib
 from pathlib import Path
 from functools import lru_cache
-from flask import send_file
+
 import numpy as np
 from flask import Flask, render_template, request, jsonify
 from rdflib import Graph, URIRef, RDF, RDFS, OWL, Literal
@@ -24,7 +24,6 @@ import step4b_regulation_update as reg_update
 import step1_add_regulation as reg_add
 import step3_agentic_weighted_grader as wgrader
 import agentic_policy_update_crawler as policy_crawler
-import agentic_kg_discovery_ALTERNATIVEpt2 as agentic_writer
 
 # =============================================================================
 # FLASK
@@ -609,9 +608,6 @@ def _find_mfg(name):
 # =============================================================================
 # ROUTES
 # =============================================================================
-
-
-
 @app.get("/")
 def index():
     return render_template("index.html")
@@ -652,79 +648,6 @@ def detail():
     })
 
 
-@app.post("/classify_existing")
-def classify_existing():
-    """
-    Called when the user hits Classify on an already-known manufacturer.
-
-    Flow:
-      1. Run the agentic writer (ALTERNATIVEpt2) — it searches the web for
-         the company's current official privacy policy, compares dates against
-         what is stored in the KG, and updates the KG in-memory + on disk if
-         the live policy is newer.
-      2. If the KG was updated, sync the in-memory manufacturers list so the
-         scoring step immediately uses the fresh text.
-      3. Run compute_scores() on whatever policy is now current and return the
-         full detail payload (same shape as /detail) plus a crawler_report
-         field so the frontend can tell the user what happened.
-    """
-    data  = request.get_json(force=True) or {}
-    iri   = (data.get("iri") or "").strip()
-    state = norm_state(data.get("state", "all"))
-
-    if not iri:
-        return jsonify({"error": "missing iri"}), 400
-
-    mfg = next((m for m in manufacturers if m["iri"] == iri), None)
-    if not mfg:
-        return jsonify({"error": "Manufacturer not found."}), 404
-
-    # ── Step 1: run the agentic policy checker / updater ──────────────────
-    crawler_report = {}
-    try:
-        result = agentic_writer.run_agentic_discovery_and_update(
-            g=g,
-            company_name=mfg["name"],
-            manufacturer_iri=URIRef(iri),
-            policy_prop=POLICY_PROP,
-            groq_client=groq_client,
-            onto_path=str(ONTO_PATH),
-        )
-        crawler_report = {
-            "wrote_update":     result.get("wrote_update", False),
-            "finish_summary":   result.get("finish_summary", ""),
-            "tool_calls_made":  result.get("tool_calls_made", 0),
-            "write_result":     result.get("write_result"),
-        }
-
-        # ── Step 2: sync in-memory list if KG was updated ─────────────────
-        if result.get("wrote_update"):
-            pols = [str(o) for o in g.objects(URIRef(iri), POLICY_PROP)
-                    if isinstance(o, Literal)]
-            if pols:
-                mfg["policy"] = max(pols, key=len)
-
-    except Exception as e:
-        # Crawler failure is non-fatal — fall through and score what we have.
-        crawler_report = {"error": str(e), "wrote_update": False}
-
-    # ── Step 3: score the (possibly refreshed) policy ────────────────────
-    scores = compute_scores(mfg["policy"], state)
-
-    return jsonify({
-        "iri":           mfg["iri"],
-        "name":          mfg["name"],
-        "policy":        mfg["policy"],
-        "state":         state,
-        "overall":       scores["overall"],
-        "law_coverage":  scores["law_coverage"],
-        "covered":       scores["covered"],
-        "missing":       scores["missing"],
-        "weighted":      scores["weighted"],
-        "crawler_report": crawler_report,
-    }), 200
-
-
 @app.post("/chat")
 def chat():
     """Uses compute_scores() — same as /detail — so numbers always match."""
@@ -762,6 +685,7 @@ def add_manufacturer():
         g.add((inst_iri, USER_ADDED_PROP, Literal(True)))
 
     ts_info = ts.upsert_policy(g, inst_iri, POLICY_PROP, policy)
+    ts.mark_checked(g, inst_iri)
     auto    = state_detector.detect_states_from_text(policy)
     states  = sel_states or [s["id"] for s in auto["detected"]]
 
@@ -869,15 +793,6 @@ def manufacturer_history():
     return jsonify(ts.get_policy_history(g, URIRef(iri), POLICY_PROP))
 
 
-@app.get("/download_ontology")
-def download_ontology():
-    if not ONTO_PATH.exists():
-        return jsonify({"error": f"File not found at {ONTO_PATH}"}), 404
-    return send_file(
-        str(ONTO_PATH),
-        as_attachment=True,
-        download_name="inferred_merged.rdf",
-    )
 
 
 @app.post("/check_company_policy_update")
@@ -1006,6 +921,7 @@ def auto_add_manufacturer():
             g.add((inst_iri, USER_ADDED_PROP, Literal(True)))
 
         ts_info = ts.upsert_policy(g, inst_iri, POLICY_PROP, policy_text)
+        ts.mark_checked(g, inst_iri)
 
         auto = state_detector.detect_states_from_text(policy_text)
         states = [s["id"] for s in auto["detected"]]
