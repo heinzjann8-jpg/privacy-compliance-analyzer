@@ -179,7 +179,9 @@ class GraphWriteSession:
 
         # All checks passed — perform the actual write via the SAME function
         # used everywhere else in the codebase. Old text is archived via
+        
         # hasPreviousPolicy inside upsert_policy(), not deleted.
+        ###3.1 upsert
         update_info = ts.upsert_policy(self.g, self.manufacturer_iri, self.policy_prop, full_text)
 
         self.write_used = True
@@ -203,6 +205,7 @@ class GraphWriteSession:
 # (so update_policy can verify it later) and return a ref token.
 # ═══════════════════════════════════════════════════════════════════════════
 
+###2
 def _build_tool_schemas() -> list[dict]:
     schemas = [s for s in akg.TOOL_SCHEMAS if s["function"]["name"] != "finish"]
     schemas.append({
@@ -249,7 +252,7 @@ def _build_tool_schemas() -> list[dict]:
     })
     return schemas
 
-
+###2.1 add to paper
 SYSTEM_PROMPT = """You are a compliance maintenance agent with WRITE access to one specific \
 manufacturer's record in a knowledge graph. You may replace their stored privacy-policy text if, \
 and only if, you find clear evidence their live policy is newer than what is stored.
@@ -278,6 +281,8 @@ Always end by calling finish()."""
 # write tool's execution routed through the session object above.
 # ═══════════════════════════════════════════════════════════════════════════
 
+
+###1
 def run_agentic_discovery_and_update(
     g: Graph,
     company_name: str,
@@ -345,6 +350,7 @@ def run_agentic_discovery_and_update(
                 finished = True
                 continue
 
+###3
             elif fname == "query_graph":
                 tool_result = akg.query_graph(g, fargs.get("sparql", ""))
 
