@@ -3,7 +3,7 @@ from pathlib import Path
 from functools import lru_cache
 
 import numpy as np
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, send_file
 from rdflib import Graph, URIRef, RDF, RDFS, OWL, Literal
 from sentence_transformers import SentenceTransformer
 from werkzeug.utils import secure_filename
@@ -615,6 +615,24 @@ def index():
 @app.get("/list")
 def list_mfg():
     return jsonify([{"iri": m["iri"], "name": m["name"]} for m in manufacturers])
+
+@app.get("/download_ontology")
+def download_ontology():
+    """
+    Download the current ontology stored on disk.
+    """
+    try:
+        # Ensure the newest graph is saved first
+        g.serialize(destination=str(ONTO_PATH), format="xml")
+
+        return send_file(
+            str(ONTO_PATH),
+            as_attachment=True,
+            download_name=ONTO_PATH.name,
+            mimetype="application/rdf+xml"
+        )
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.get("/detail")
