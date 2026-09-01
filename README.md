@@ -12,9 +12,10 @@ Edit `config.json`:
 - similarity_method:compare TF-IDF or BERT by typing tfidf or bert
 - coverage_threshold: configure threshold to compare compliancy
 
-## 3) Run
+## 3) Run (in local instance)
 ```bash
 python app.py
 ```
-Open http://127.0.0.1:5000 and search for a manufacturer (e.g., Apple, AXS, Billboard) or submit your own.
+Open http://127.0.0.1:5000 in local browser to view site
 
+Live Website Link: https://privacy-compliance-analyzer.onrender.com
