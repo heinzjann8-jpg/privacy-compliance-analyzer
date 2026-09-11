@@ -3,7 +3,7 @@ from pathlib import Path
 from functools import lru_cache
 
 import numpy as np
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, send_file
 from rdflib import Graph, URIRef, RDF, RDFS, OWL, Literal, XSD
 from sentence_transformers import SentenceTransformer
 from werkzeug.utils import secure_filename
@@ -648,8 +648,10 @@ def download_ontology():
     Download the current ontology stored on disk.
     """
     try:
-        # Ensure the newest graph is saved first
-        g.serialize(destination=str(ONTO_PATH), format="xml")
+        if not ONTO_PATH.exists():
+            return jsonify({
+                "error": f"Ontology file not found: {ONTO_PATH}"
+            }), 404
 
         return send_file(
             str(ONTO_PATH),
@@ -657,8 +659,12 @@ def download_ontology():
             download_name=ONTO_PATH.name,
             mimetype="application/rdf+xml"
         )
+
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({
+            "error": str(e),
+            "ontology_path": str(ONTO_PATH)
+        }), 500
 
 
 @app.get("/detail")
