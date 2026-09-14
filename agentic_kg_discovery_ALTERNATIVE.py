@@ -315,7 +315,7 @@ def run_agentic_discovery(
     class_to_laws: Optional[dict[str, set]] = None,
     law_to_class_idxs: Optional[dict[str, list]] = None,
     LAWS: Optional[list[dict]] = None,
-    model: str = "llama-3.3-70b-versatile",
+    model: str = "openai/gpt-oss-20b",
     max_steps: int = MAX_AGENT_STEPS,
 ) -> dict[str, Any]:
     """
