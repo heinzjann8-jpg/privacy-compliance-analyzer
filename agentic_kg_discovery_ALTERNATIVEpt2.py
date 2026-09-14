@@ -290,7 +290,7 @@ def run_agentic_discovery_and_update(
     policy_prop: URIRef,
     groq_client: Any,
     onto_path: Optional[str] = None,
-    model: str = "llama-3.3-70b-versatile",
+    model: str = "openai/gpt-oss-20b",
     max_steps: int = MAX_AGENT_STEPS,
 ) -> dict[str, Any]:
     session = GraphWriteSession(g, manufacturer_iri, policy_prop, company_name, groq_client)
