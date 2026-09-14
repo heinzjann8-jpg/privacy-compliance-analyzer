@@ -252,7 +252,7 @@ def _json_from_llm(raw: str) -> dict[str, Any]:
 def llm_extract_policy_date(
     policy_text: str,
     llm_client: Any = None,
-    llm_model: str = "llama-3.3-70b-versatile",
+    llm_model: str = "openai/gpt-oss-20b",
     llm_callable: Optional[Callable[[str, str], str]] = None,
 ) -> DateCandidate:
     """LLM fallback for unclear policy dates. It extracts only; it does not update the KG."""
