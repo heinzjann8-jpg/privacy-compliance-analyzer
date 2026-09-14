@@ -2352,6 +2352,51 @@ NIST IR 8259 — “Authentication and authorization mechanisms … limit access
     
 
 
+
+    <!-- http://example.org/onto.owl#CaliforniaAssessmentScore -->
+
+    <owl:DatatypeProperty rdf:about="http://example.org/onto.owl#CaliforniaAssessmentScore">
+        <rdfs:domain rdf:resource="http://example.org/onto.owl#Manufacturer"/>
+        <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#decimal"/>
+        <rdfs:label>California Assessment Score</rdfs:label>
+        <rdfs:comment>Score assigned to the manufacturer from the California assessment. Populate during manual checking or the monthly assessment job.</rdfs:comment>
+    </owl:DatatypeProperty>
+
+
+
+    <!-- http://example.org/onto.owl#OregonAssessmentScore -->
+
+    <owl:DatatypeProperty rdf:about="http://example.org/onto.owl#OregonAssessmentScore">
+        <rdfs:domain rdf:resource="http://example.org/onto.owl#Manufacturer"/>
+        <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#decimal"/>
+        <rdfs:label>Oregon Assessment Score</rdfs:label>
+        <rdfs:comment>Score assigned to the manufacturer from the Oregon assessment. Populate during manual checking or the monthly assessment job.</rdfs:comment>
+    </owl:DatatypeProperty>
+
+
+
+    <!-- http://example.org/onto.owl#NISTAssessmentScore -->
+
+    <owl:DatatypeProperty rdf:about="http://example.org/onto.owl#NISTAssessmentScore">
+        <rdfs:domain rdf:resource="http://example.org/onto.owl#Manufacturer"/>
+        <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#decimal"/>
+        <rdfs:label>NIST Assessment Score</rdfs:label>
+        <rdfs:comment>Score assigned to the manufacturer from the NIST assessment. Populate during manual checking or the monthly assessment job.</rdfs:comment>
+    </owl:DatatypeProperty>
+
+
+
+    <!-- http://example.org/onto.owl#PublicLawAssessmentScore -->
+
+    <owl:DatatypeProperty rdf:about="http://example.org/onto.owl#PublicLawAssessmentScore">
+        <rdfs:domain rdf:resource="http://example.org/onto.owl#Manufacturer"/>
+        <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#decimal"/>
+        <rdfs:label>Public Law Assessment Score</rdfs:label>
+        <rdfs:comment>Score assigned to the manufacturer from the Public Law assessment. Populate during manual checking or the monthly assessment job.</rdfs:comment>
+    </owl:DatatypeProperty>
+
+
+
     <!-- 
     ///////////////////////////////////////////////////////////////////////////////////////
     //
