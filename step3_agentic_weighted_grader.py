@@ -82,7 +82,7 @@ def init_grader(**kwargs):
 
 def _llm(system: str, user: str, max_tokens: int = 800, temp: float = 0.15) -> str:
     resp = _S["groq_client"].chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model="openai/gpt-oss-20b",
         messages=[
             {"role": "system", "content": system},
             {"role": "user",   "content": user},
