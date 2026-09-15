@@ -54,6 +54,12 @@ EMBED_MODEL   = CFG.get("embedding_model_name", "all-MiniLM-L6-v2")
 USER_ADDED_PROP       = URIRef("http://example.org/onto.owl#userAddedManufacturer")
 APPLIES_TO_STATE_PROP = URIRef("http://example.org/onto.owl#appliesToState")
 ASSESSMENT_SCORE_PROP = URIRef("http://example.org/onto.owl#AssessmentScore")
+LAW_ASSESSMENT_SCORE_PROPS = {
+    "CA_SB_327": URIRef("http://example.org/onto.owl#CaliforniaAssessmentScore"),
+    "OR_HB_2395": URIRef("http://example.org/onto.owl#OregonAssessmentScore"),
+    "NISTIR_8259": URIRef("http://example.org/onto.owl#NISTIR8259AssessmentScore"),
+    "IoT_Cyber_Act_2020": URIRef("http://example.org/onto.owl#PublicLaw116207AssessmentScore"),
+}
 
 # =============================================================================
 # STATE NORMALISATION  (frontend value → STATE_CATALOG ID)
@@ -209,6 +215,40 @@ wgrader.init_grader(
 )
 
 # =============================================================================
+# POLICY HISTORY CLEANUP
+# =============================================================================
+HAS_PREVIOUS_POLICY_PROP = URIRef("http://example.org/onto.owl#hasPreviousPolicy")
+_POLICY_HISTORY_TS = re.compile(r"^\\[([0-9T:+.\\-Z]+)\\]\\s*", re.I)
+
+def retain_one_previous_policy(manufacturer_iri):
+    """Keep only the newest archived policy for a manufacturer."""
+    iri = URIRef(manufacturer_iri)
+    values = list(g.objects(iri, HAS_PREVIOUS_POLICY_PROP))
+    if len(values) <= 1:
+        return 0
+
+    def history_key(value):
+        m = _POLICY_HISTORY_TS.match(str(value))
+        return m.group(1) if m else ""
+
+    keep = max(values, key=history_key)
+    removed = 0
+    for value in values:
+        if value != keep:
+            g.remove((iri, HAS_PREVIOUS_POLICY_PROP, value))
+            removed += 1
+    return removed
+
+def cleanup_all_policy_history(persist=True):
+    """Migrate existing manufacturer instances to exactly one prior policy."""
+    subjects = set(g.subjects(HAS_PREVIOUS_POLICY_PROP, None))
+    removed = sum(retain_one_previous_policy(s) for s in subjects)
+    if persist and removed:
+        g.serialize(destination=str(ONTO_PATH), format="xml")
+    print(f"[policy-history] Removed {removed} superseded prior policies")
+    return removed
+
+# =============================================================================
 # CORE SCORING  —  single function used by BOTH /detail AND /chat
 # =============================================================================
 def _active_laws(state):
@@ -224,6 +264,19 @@ def _active_laws(state):
     ids = {l["id"] for l in state_detector.applicable_laws([state], LAWS)}
     return [l for l in LAWS if l["id"] in ids]
 
+
+def _law_annotations_for_score(law):
+    """Collect KG law annotations that correspond to one legislation."""
+    hits = []
+    keywords = [law.get("label", ""), law.get("id", "").replace("_", " ")] + law.get("keywords", [])
+    keywords = [k.lower() for k in keywords if k]
+    for c_iri in [class_iris[i] for i in law_to_class_idxs.get(law["id"], [])]:
+        for pred in LAW_PREDS:
+            for obj in g.objects(URIRef(c_iri), pred):
+                raw = str(obj).strip()
+                if any(k in raw.lower() for k in keywords):
+                    hits.append(raw)
+    return list(dict.fromkeys(hits))
 
 def compute_scores(policy, state):
     """
@@ -251,13 +304,21 @@ def compute_scores(policy, state):
         lid  = law["id"]
         idxs = law_to_class_idxs.get(lid, [])
         if not idxs:
-            law_coverage.append({"id": lid, "label": law["label"],
-                                  "coverage_percent": 0.0, "num_classes": 0, "num_above": 0})
+            law_coverage.append({
+                "id": lid, "label": law["label"],
+                "coverage_percent": 0.0, "num_classes": 0, "num_above": 0,
+                "score_property": str(LAW_ASSESSMENT_SCORE_PROPS.get(lid, "")),
+                "annotations": [],
+            })
             continue
         above = sum(1 for i in idxs if float(sims[i]) >= THRESHOLD)
         pct   = round(100.0 * above / len(idxs), 2)
-        law_coverage.append({"id": lid, "label": law["label"],
-                              "coverage_percent": pct, "num_classes": len(idxs), "num_above": above})
+        law_coverage.append({
+            "id": lid, "label": law["label"],
+            "coverage_percent": pct, "num_classes": len(idxs), "num_above": above,
+            "score_property": str(LAW_ASSESSMENT_SCORE_PROPS.get(lid, "")),
+            "annotations": _law_annotations_for_score(law),
+        })
         total_cls += len(idxs); total_above += above
     overall = round(100.0 * total_above / total_cls, 2) if total_cls else 0.0
 
@@ -325,24 +386,42 @@ def compute_scores(policy, state):
 
 
 def update_assessment_score(manufacturer_iri, policy):
-    """Calculate and persist the manufacturer AssessmentScore using all configured laws."""
-    score = 0.0 if not (policy or "").strip() else float(compute_scores(policy, "all")["overall"])
-    g.set((URIRef(manufacturer_iri), ASSESSMENT_SCORE_PROP,
-           Literal(f"{score:.2f}", datatype=XSD.decimal)))
-    return round(score, 2)
+    """Persist the overall score plus one score for each requested regulation."""
+    iri = URIRef(manufacturer_iri)
+    if not (policy or "").strip():
+        overall = 0.0
+        per_law = {lid: 0.0 for lid in LAW_ASSESSMENT_SCORE_PROPS}
+    else:
+        all_scores = compute_scores(policy, "all")
+        overall = float(all_scores["overall"])
+        per_law = {
+            item["id"]: float(item["coverage_percent"])
+            for item in all_scores["law_coverage"]
+            if item["id"] in LAW_ASSESSMENT_SCORE_PROPS
+        }
+
+    g.set((iri, ASSESSMENT_SCORE_PROP,
+           Literal(f"{overall:.2f}", datatype=XSD.decimal)))
+    for law_id, prop in LAW_ASSESSMENT_SCORE_PROPS.items():
+        g.set((iri, prop, Literal(f"{per_law.get(law_id, 0.0):.2f}", datatype=XSD.decimal)))
+    return round(overall, 2)
 
 
 def refresh_all_assessment_scores(persist=True):
-    """Keep AssessmentScore synchronized for every manufacturer loaded by the app."""
+    """Keep overall and per-regulation assessment scores synchronized."""
     updated = 0
     for mfg in manufacturers:
+        retain_one_previous_policy(mfg["iri"])
         update_assessment_score(mfg["iri"], mfg.get("policy", ""))
         updated += 1
     if persist:
         g.serialize(destination=str(ONTO_PATH), format="xml")
-    print(f"[assessment] Updated AssessmentScore for {updated} manufacturers")
+    print(f"[assessment] Updated overall + four regulation scores for {updated} manufacturers")
     return updated
 
+
+# Migrate old policy history before the first score refresh.
+cleanup_all_policy_history(persist=True)
 
 # Initialize persisted manufacturer assessment scores once the scoring function is available.
 refresh_all_assessment_scores(persist=True)
@@ -597,7 +676,7 @@ SYSTEM_PROMPT = (
 def _call_llm(question, context):
     try:
         resp = groq_client.chat.completions.create(
-            model="openai/gpt-oss-20b",
+            model="llama-3.1-8b-instant",
             messages=[{"role": "system", "content": SYSTEM_PROMPT},
                       {"role": "user",   "content": f"DATA:\n{context}\n\nQUESTION:\n{question}"}],
             temperature=0.1, max_tokens=700)
@@ -642,30 +721,6 @@ def index():
 def list_mfg():
     return jsonify([{"iri": m["iri"], "name": m["name"]} for m in manufacturers])
 
-@app.get("/download_ontology")
-def download_ontology():
-    """
-    Download the current ontology stored on disk.
-    """
-    try:
-        if not ONTO_PATH.exists():
-            return jsonify({
-                "error": f"Ontology file not found: {ONTO_PATH}"
-            }), 404
-
-        return send_file(
-            str(ONTO_PATH),
-            as_attachment=True,
-            download_name=ONTO_PATH.name,
-            mimetype="application/rdf+xml"
-        )
-
-    except Exception as e:
-        return jsonify({
-            "error": str(e),
-            "ontology_path": str(ONTO_PATH)
-        }), 500
-
 
 @app.get("/detail")
 def detail():
@@ -700,6 +755,29 @@ def detail():
         "weighted":     scores["weighted"],
     })
 
+@app.get("/download_ontology")
+def download_ontology():
+    """
+    Download the current ontology stored on disk.
+    """
+    try:
+        if not ONTO_PATH.exists():
+            return jsonify({
+                "error": f"Ontology file not found: {ONTO_PATH}"
+            }), 404
+
+        return send_file(
+            str(ONTO_PATH),
+            as_attachment=True,
+            download_name=ONTO_PATH.name,
+            mimetype="application/rdf+xml"
+        )
+
+    except Exception as e:
+        return jsonify({
+            "error": str(e),
+            "ontology_path": str(ONTO_PATH)
+        }), 500
 
 @app.post("/classify_existing")
 def classify_existing():
@@ -739,6 +817,7 @@ def classify_existing():
             groq_client=groq_client,
             onto_path=str(ONTO_PATH),
         )
+        retain_one_previous_policy(iri)
         crawler_report = {
             "wrote_update":     result.get("wrote_update", False),
             "finish_summary":   result.get("finish_summary", ""),
@@ -769,6 +848,11 @@ def classify_existing():
         "state":         state,
         "overall":       scores["overall"],
         "AssessmentScore": assessment_score,
+        "law_scores": {
+            item["id"]: item["coverage_percent"]
+            for item in scores["law_coverage"]
+            if item["id"] in LAW_ASSESSMENT_SCORE_PROPS
+        },
         "law_coverage":  scores["law_coverage"],
         "covered":       scores["covered"],
         "missing":       scores["missing"],
@@ -814,6 +898,7 @@ def add_manufacturer():
         g.add((inst_iri, USER_ADDED_PROP, Literal(True)))
 
     ts_info = ts.upsert_policy(g, inst_iri, POLICY_PROP, policy)
+    retain_one_previous_policy(inst_iri)
     auto    = state_detector.detect_states_from_text(policy)
     states  = sel_states or [s["id"] for s in auto["detected"]]
 
@@ -963,6 +1048,7 @@ def check_company_policy_update():
         # If the KG was refreshed, keep the in-memory manufacturer list in sync
         # so /detail and /chat score the updated policy immediately.
         if report.get("status") == "updated":
+            retain_one_previous_policy(iri)
             pols = [str(o) for o in g.objects(URIRef(iri), POLICY_PROP) if isinstance(o, Literal)]
             if pols:
                 mfg["policy"] = max(pols, key=len)
