@@ -83,7 +83,7 @@ MAX_AGENT_STEPS = 10
 AUDIT_LOG_PATH = "agentic_write_audit_log.json"
 
 HAS_PREVIOUS_POLICY_PROP = URIRef("http://example.org/onto.owl#hasPreviousPolicy")
-_POLICY_HISTORY_TS = __import__("re").compile(r"^\\[([0-9T:+.\\-Z]+)\\]\\s*", __import__("re").I)
+_POLICY_HISTORY_TS = __import__("re").compile(r"^\[([0-9T:+.\-Z]+)\]\s*", __import__("re").I)
 
 def retain_one_previous_policy(g: Graph, manufacturer_iri: URIRef) -> int:
     """Keep exactly one archived policy: the newest timestamped prior policy."""
