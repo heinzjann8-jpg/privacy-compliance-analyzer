@@ -676,7 +676,7 @@ SYSTEM_PROMPT = (
 def _call_llm(question, context):
     try:
         resp = groq_client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+            model="openai/gpt-oss-20b",
             messages=[{"role": "system", "content": SYSTEM_PROMPT},
                       {"role": "user",   "content": f"DATA:\n{context}\n\nQUESTION:\n{question}"}],
             temperature=0.1, max_tokens=700)
