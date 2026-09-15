@@ -82,6 +82,25 @@ logger = logging.getLogger("agentic_kg_writer")
 MAX_AGENT_STEPS = 10
 AUDIT_LOG_PATH = "agentic_write_audit_log.json"
 
+HAS_PREVIOUS_POLICY_PROP = URIRef("http://example.org/onto.owl#hasPreviousPolicy")
+_POLICY_HISTORY_TS = __import__("re").compile(r"^\\[([0-9T:+.\\-Z]+)\\]\\s*", __import__("re").I)
+
+def retain_one_previous_policy(g: Graph, manufacturer_iri: URIRef) -> int:
+    """Keep exactly one archived policy: the newest timestamped prior policy."""
+    values = list(g.objects(manufacturer_iri, HAS_PREVIOUS_POLICY_PROP))
+    if len(values) <= 1:
+        return 0
+    def key(value):
+        m = _POLICY_HISTORY_TS.match(str(value))
+        return m.group(1) if m else ""
+    keep = max(values, key=key)
+    removed = 0
+    for value in values:
+        if value != keep:
+            g.remove((manufacturer_iri, HAS_PREVIOUS_POLICY_PROP, value))
+            removed += 1
+    return removed
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # AUDIT LOGGING — append-only, separate file from the ontology itself
@@ -175,14 +194,14 @@ class GraphWriteSession:
                 "reason": decision["reason"],
                 "stored_date": str(stored_date.parsed),
                 "live_date": str(live_date.parsed),
+                "checked_at": checked_at,
             }
 
         # All checks passed — perform the actual write via the SAME function
         # used everywhere else in the codebase. Old text is archived via
-        
         # hasPreviousPolicy inside upsert_policy(), not deleted.
-        ###3.1 upsert
         update_info = ts.upsert_policy(self.g, self.manufacturer_iri, self.policy_prop, full_text)
+        retain_one_previous_policy(self.g, self.manufacturer_iri)
 
         self.write_used = True
         self.write_result = {
@@ -194,6 +213,7 @@ class GraphWriteSession:
             "previous_text_length": len(update_info.get("previous_policy") or ""),
             "model_confidence": model_confidence,
             "model_reasoning": model_reasoning,
+            "checked_at": checked_at,
             "upsert_info": update_info,
         }
         return self.write_result
@@ -205,7 +225,6 @@ class GraphWriteSession:
 # (so update_policy can verify it later) and return a ref token.
 # ═══════════════════════════════════════════════════════════════════════════
 
-###2
 def _build_tool_schemas() -> list[dict]:
     schemas = [s for s in akg.TOOL_SCHEMAS if s["function"]["name"] != "finish"]
     schemas.append({
@@ -252,7 +271,7 @@ def _build_tool_schemas() -> list[dict]:
     })
     return schemas
 
-###2.1 add to paper
+
 SYSTEM_PROMPT = """You are a compliance maintenance agent with WRITE access to one specific \
 manufacturer's record in a knowledge graph. You may replace their stored privacy-policy text if, \
 and only if, you find clear evidence their live policy is newer than what is stored.
@@ -281,8 +300,6 @@ Always end by calling finish()."""
 # write tool's execution routed through the session object above.
 # ═══════════════════════════════════════════════════════════════════════════
 
-
-###1
 def run_agentic_discovery_and_update(
     g: Graph,
     company_name: str,
@@ -290,7 +307,7 @@ def run_agentic_discovery_and_update(
     policy_prop: URIRef,
     groq_client: Any,
     onto_path: Optional[str] = None,
-    model: str = "openai/gpt-oss-20b",
+    model: str = "llama-3.3-70b-versatile",
     max_steps: int = MAX_AGENT_STEPS,
 ) -> dict[str, Any]:
     session = GraphWriteSession(g, manufacturer_iri, policy_prop, company_name, groq_client)
@@ -350,7 +367,6 @@ def run_agentic_discovery_and_update(
                 finished = True
                 continue
 
-###3
             elif fname == "query_graph":
                 tool_result = akg.query_graph(g, fargs.get("sparql", ""))
 
