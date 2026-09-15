@@ -218,7 +218,7 @@ wgrader.init_grader(
 # POLICY HISTORY CLEANUP
 # =============================================================================
 HAS_PREVIOUS_POLICY_PROP = URIRef("http://example.org/onto.owl#hasPreviousPolicy")
-_POLICY_HISTORY_TS = re.compile(r"^\\[([0-9T:+.\\-Z]+)\\]\\s*", re.I)
+_POLICY_HISTORY_TS = re.compile(r"^\[([0-9T:+.\-Z]+)\]\s*", re.I)
 
 def retain_one_previous_policy(manufacturer_iri):
     """Keep only the newest archived policy for a manufacturer."""
