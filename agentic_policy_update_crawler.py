@@ -252,7 +252,7 @@ def _json_from_llm(raw: str) -> dict[str, Any]:
 def llm_extract_policy_date(
     policy_text: str,
     llm_client: Any = None,
-    llm_model: str = "openai/gpt-oss-20b",
+    llm_model: str = "llama-3.1-8b-instant",
     llm_callable: Optional[Callable[[str, str], str]] = None,
 ) -> DateCandidate:
     """LLM fallback for unclear policy dates. It extracts only; it does not update the KG."""
@@ -310,7 +310,7 @@ def extract_policy_date_agent(
     policy_text: str,
     last_modified_header: str | None = None,
     llm_client: Any = None,
-    llm_model: str = "openai/gpt-oss-20b",
+    llm_model: str = "llama-3.1-8b-instant",
     llm_callable: Optional[Callable[[str, str], str]] = None,
     force_llm: bool = False,
 ) -> tuple[DateCandidate, bool]:
@@ -388,7 +388,7 @@ def check_and_update_company_policy(
     timestamp_module: Any,
     ontology_path: Optional[str] = None,
     llm_client: Any = None,
-    llm_model: str = "openai/gpt-oss-20b",
+    llm_model: str = "llama-3.1-8b-instant",
     llm_callable: Optional[Callable[[str, str], str]] = None,
     force_llm: bool = False,
 ) -> dict[str, Any]:
@@ -813,7 +813,7 @@ def llm_select_policy_url(
     company_name: str,
     candidates: list[dict[str, Any]],
     llm_client: Any = None,
-    llm_model: str = "openai/gpt-oss-20b",
+    llm_model: str = "llama-3.1-8b-instant",
     llm_callable: Optional[Callable[[str, str], str]] = None,
 ) -> dict[str, Any]:
     """
@@ -904,6 +904,18 @@ Return exactly:
     if selected not in valid_urls:
         selected = None
         confidence = "none"
+    else:
+        # The candidates passed through deterministic content validation before
+        # reaching the LLM.  A valid candidate therefore already has direct
+        # fetch evidence that it looks like an actual privacy-policy page.
+        # Do not let a conservative/variable LLM confidence label turn that
+        # verified evidence into a hard "low confidence" rejection.
+        selected_candidate = next((c for c in candidates if c.get("url") == selected), None)
+        if selected_candidate:
+            validation_score = int(selected_candidate.get("validation_score", 0) or 0)
+            text_length = int(selected_candidate.get("text_length", 0) or 0)
+            if confidence == "low" and validation_score >= 5 and text_length >= 1500:
+                confidence = "medium"
 
         print("\n========== LLM URL SELECTION ==========")
     print(f"Company: {company_name}")
@@ -925,7 +937,7 @@ Return exactly:
 def discover_policy_url_agent(
     company_name: str,
     llm_client: Any = None,
-    llm_model: str = "openai/gpt-oss-20b",
+    llm_model: str = "llama-3.1-8b-instant",
     llm_callable: Optional[Callable[[str, str], str]] = None,
 ) -> dict[str, Any]:
     """
@@ -955,7 +967,7 @@ def discover_policy_url_agent(
 def fetch_live_policy_for_company_name(
     company_name: str,
     llm_client: Any = None,
-    llm_model: str = "openai/gpt-oss-20b",
+    llm_model: str = "llama-3.1-8b-instant",
     llm_callable: Optional[Callable[[str, str], str]] = None,
 ) -> dict[str, Any]:
     """
