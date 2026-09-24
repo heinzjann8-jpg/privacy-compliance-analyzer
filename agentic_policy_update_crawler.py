@@ -290,6 +290,7 @@ PRIVACY POLICY TEXT:
             messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
             temperature=0.0,
             max_tokens=220,
+            response_format={"type": "json_object"},
         )
         raw = resp.choices[0].message.content.strip()
     else:
@@ -829,6 +830,74 @@ def collect_policy_url_candidates(company_name: str, max_candidates_to_fetch: in
     return out[:8]
 
 #6 select which link is best
+def _deterministic_policy_candidate_score(company_name: str, candidate: dict[str, Any]) -> tuple[int, list[str]]:
+    """Rank candidates without an LLM, preferring the manufacturer's general policy.
+
+    The normal search/validation score measures whether a page *looks* like a
+    privacy policy.  It does not distinguish a general manufacturer policy from
+    a specialized notice such as an Alexa/Ava/service-program notice.  This
+    second score adds that distinction while keeping the original score intact.
+    """
+    url = str(candidate.get("url") or "").lower()
+    title = str(candidate.get("title") or candidate.get("search_title") or "").lower()
+    reason = str(candidate.get("reason") or "").lower()
+    preview = str(candidate.get("text_preview") or "").lower()
+    text = " ".join((url, title, reason, preview))
+
+    score = int(candidate.get("score", 0) or 0)
+    reasons: list[str] = []
+
+    # Strong positive evidence that this is the manufacturer's general policy.
+    generic_terms = (
+        "privacy policy", "privacy notice", "privacy statement", "privacy policy -"
+    )
+    if any(term in title for term in generic_terms):
+        score += 5
+        reasons.append("generic privacy-policy title")
+    elif any(term in url for term in ("/privacy-policy", "/privacy_policy", "/privacy")):
+        score += 3
+        reasons.append("generic privacy-policy URL")
+
+    # Prefer the manufacturer's own domain over a service-specific host when
+    # the candidate otherwise has comparable validation evidence.
+    company_tokens = [t for t in re.findall(r"[a-z0-9]+", company_name.lower()) if len(t) >= 3]
+    host_match = any(token in url for token in company_tokens)
+    if host_match:
+        score += 3
+        reasons.append("manufacturer domain match")
+
+    # Penalize pages that are clearly scoped to a product, service, program,
+    # region, or feature. These are useful candidates, but should lose to a
+    # general manufacturer policy when both are otherwise strong.
+    specialized_terms = (
+        "alexa", "ava service", "assistant", "user-experience-improvement",
+        "improvement-program", "service privacy", "product privacy", "app privacy",
+        "cookie", "sdk", "developer", "support", "help.", "program privacy",
+        "experience improvement", "specific service"
+    )
+    penalties = sum(1 for term in specialized_terms if term in text)
+    if penalties:
+        penalty = min(10, penalties * 3)
+        score -= penalty
+        reasons.append(f"specialized-page penalty -{penalty}")
+
+    # Regional duplicates should not beat a base/global manufacturer policy
+    # unless their evidence is materially stronger.
+    regional_terms = ("/eu-", "/uk-", "/hr-", "/de-", "/fr-", "/it-", "/es-")
+    if any(term in url for term in regional_terms):
+        score -= 2
+        reasons.append("regional duplicate penalty -2")
+
+    return score, reasons
+
+
+def _select_deterministic_policy_candidate(company_name: str, candidates: list[dict[str, Any]]) -> tuple[dict[str, Any], int, list[str]]:
+    ranked = [(_deterministic_policy_candidate_score(company_name, c), c) for c in candidates]
+    ranked.sort(key=lambda item: (item[0][0], int(item[1].get("validation_score", 0) or 0), int(item[1].get("text_length", 0) or 0)), reverse=True)
+    (score, reasons), best = ranked[0]
+    return best, score, reasons
+
+
 def llm_select_policy_url(
     company_name: str,
     candidates: list[dict[str, Any]],
@@ -853,9 +922,11 @@ def llm_select_policy_url(
     # Only skip the LLM when no client/callable is configured.
 
     system = (
-        "You select the official privacy policy URL for a company. "
-        "Return JSON only. Reject blogs, news articles, summaries, cookie-setting pages, "
-        "and unrelated third-party pages."
+        "You select the official, general privacy policy URL for a company. "
+        "Return one valid JSON object and nothing else. Reject blogs, news articles, summaries, "
+        "cookie-setting pages, and unrelated third-party pages. Prefer the manufacturer's general "
+        "privacy policy over a privacy notice limited to a named product, assistant, service, app, "
+        "program, or regional duplicate when both are otherwise valid."
     )
     candidate_lines = []
     for i, c in enumerate(candidates, start=1):
@@ -893,29 +964,38 @@ Return exactly:
         )
         raw = resp.choices[0].message.content.strip()
     else:
-        # Deterministic fallback: choose highest scored candidate.
-        best = candidates[0]
+        # Deterministic fallback: prefer a general manufacturer privacy policy
+        # over a specialized service/product notice.
+        best, deterministic_score, fallback_reasons = _select_deterministic_policy_candidate(
+            company_name, candidates
+        )
         return {
             "selected_policy_url": best.get("url"),
             "confidence": "medium",
             "llm_used_for_url": False,
-            "reason": "No LLM client configured; selected highest-scoring candidate.",
+            "reason": "No LLM client configured; selected the strongest general-policy candidate. "
+                      + "; ".join(fallback_reasons),
+            "deterministic_score": deterministic_score,
             "candidates": candidates,
         }
 
     try:
         data = _json_from_llm(raw)
     except Exception as exc:
-        best = candidates[0]
+        best, deterministic_score, fallback_reasons = _select_deterministic_policy_candidate(
+            company_name, candidates
+        )
         _discovery_log(
             f"llm_selection company={company_name} parse=FAILED error={type(exc).__name__}: {exc}; "
-            f"fallback_url={best.get('url')} confidence=low"
+            f"fallback_url={best.get('url')} deterministic_score={deterministic_score} confidence=medium"
         )
         return {
             "selected_policy_url": best.get("url"),
-            "confidence": "low",
+            "confidence": "medium",
             "llm_used_for_url": True,
-            "reason": "LLM returned invalid JSON; fell back to highest-scoring candidate.",
+            "reason": "LLM returned invalid JSON; used deterministic general-policy fallback. "
+                      + "; ".join(fallback_reasons),
+            "deterministic_score": deterministic_score,
             "candidates": candidates,
         }
 
