@@ -1,373 +1,359 @@
 """
-step7_agentic_kg_writer.py
-────────────────────────────
-A write-capable extension of step6_agentic_kg_discovery.py.
+step6_agentic_kg_discovery.py
+──────────────────────────────
+A genuinely agentic version of policy discovery, as distinct from the
+fixed pipeline in agentic_policy_update_crawler.py.
 
-DIFFERENCE FROM step6
-──────────────────────
-step6 gives the model query_graph / search_web / fetch_url / finish, and your
-Python code decides whether to act on the model's final answer. The model
-never touches the graph.
+WHAT'S DIFFERENT FROM THE EXISTING PIPELINE
+────────────────────────────────────────────
+discover_policy_url_agent() in agentic_policy_update_crawler.py always
+runs the same hardcoded sequence:
+    search -> fetch candidates -> validate -> ask LLM to pick one
 
-This module adds a FIFTH tool, update_policy, which the model can call
-directly to replace an outdated policy in the knowledge graph. The model
-decides WHEN to call it. But — and this is the important part — the tool
-itself is not a thin wrapper that blindly does whatever the model asks. It
-enforces real guardrails in code, not just in the prompt:
+The LLM only ever gets to make ONE decision (which candidate to pick).
+Every other step — how many searches, which pages to fetch, whether to
+consult the knowledge graph at all — is decided by your Python code,
+not the model.
 
-  1. SCOPE LOCK — the tool is bound to ONE manufacturer_iri for the entire
-     run. The model cannot pass a different IRI and write to some other
-     manufacturer's node. There is no "target" parameter on the tool at all.
+This module instead gives the model a small toolbox:
 
-  2. EVIDENCE REQUIREMENT — update_policy refuses to run unless the model
-     has ALREADY called fetch_url at least once in this session AND the
-     fetched text is what gets written — not text the model retypes from
-     memory. The tool takes a `fetched_text_ref` token (returned by
-     fetch_url) rather than freeform text, so the model cannot fabricate
-     policy text and have it accepted as if it were real.
+    query_graph(sparql)   -- read-only SPARQL query against the live KG
+    search_web(query)     -- Brave search, returns titles/snippets/urls
+    fetch_url(url)        -- fetches a page and returns cleaned text
 
-  3. DATE GATE — update_policy independently re-runs the same deterministic
-     date comparison (extract_policy_date_agent + compare_policy_dates)
-     used elsewhere in your codebase. If that comparison disagrees with the
-     model ("should_update" is False), the write is refused regardless of
-     how confident the model's tool call sounded. The model's confidence is
-     advisory; the date math is the actual gate.
+...and runs a loop where the MODEL decides which tool to call, how many
+times, in what order, until it has enough information to answer. This
+is the "agent reasons over the graph" pattern: the KG becomes something
+the model can consult mid-task, not just a place results get written
+to afterward.
 
-  4. SINGLE WRITE — once update_policy succeeds, it is removed from the
-     model's available tools for the rest of that session, so a confused
-     model cannot loop and overwrite the same node repeatedly in one run.
+WHY THIS MATTERS FOR YOUR USE CASE SPECIFICALLY
+─────────────────────────────────────────────────
+The model can now do things the fixed pipeline structurally cannot:
+  - Check what regulatory classes a manufacturer is currently scored
+    against BEFORE deciding how to search, so it can specifically look
+    for whether THOSE sections changed (rather than treating policy
+    text as one undifferentiated blob).
+  - Check the manufacturer's last recorded modification date and
+    skip an expensive multi-query search if it already has strong
+    context from a prior run.
+  - Decide on its own that one search wasn't enough and issue a
+    second, differently-phrased one — instead of always running the
+    same fixed 4 query templates regardless of how the first one went.
 
-  5. EVERY WRITE IS LOGGED — before/after text length, the date evidence,
-     and the model's own stated reasoning are all written to an audit
-     log file, separate from the ontology itself.
-
-WHAT STILL DOESN'T CHANGE
-──────────────────────────
-The actual graph mutation is still performed by step4a_timestamps.upsert_policy()
-— this module does not reimplement that logic, it calls it. The old policy
-is still preserved via hasPreviousPolicy, exactly as before. Nothing here
-changes how upsert_policy() itself behaves.
+SAFETY NOTE
+───────────
+query_graph() is READ-ONLY by construction — it rejects anything other
+than SELECT/ASK/CONSTRUCT/DESCRIBE queries. The model can look at the
+graph, but cannot use this tool to write to it. All writes still go
+through step4a_timestamps.upsert_policy(), called explicitly by your
+code after the loop ends — same as before. Giving the model direct
+write access to the ontology would be a significantly bigger trust
+boundary than is appropriate here, given it's selecting among LLM-
+suggested actions based on web content it does not fully control.
 
 USAGE
 ─────
-    import step7_agentic_kg_writer as akw
+    import step6_agentic_kg_discovery as akg
 
-    result = akw.run_agentic_discovery_and_update(
-        g=g,
+    result = akg.run_agentic_discovery(
+        g=g,                          # your rdflib Graph
         company_name="Acurite",
-        manufacturer_iri=URIRef(...),
-        policy_prop=POLICY_PROP,
+        manufacturer_iri=URIRef(...), # the company's node in the KG
         groq_client=groq_client,
-        onto_path=str(ONTO_PATH),   # pass None to skip auto-serialize
+        class_labels=class_labels,    # from app.py's startup block
+        class_to_laws=class_to_laws,
+        law_to_class_idxs=law_to_class_idxs,
+        LAWS=LAWS,
     )
-    # result["wrote_update"], result["reasoning_trace"], result["audit_entry"]
+    # result["final_url"], result["reasoning_trace"], result["tool_calls_made"]
 """
 
 from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Optional
 
-from rdflib import Graph, URIRef
+from rdflib import Graph, URIRef, RDFS, Literal
+from rdflib.plugins.sparql import prepareQuery
 
-import step4a_timestamps as ts
 import agentic_policy_update_crawler as policy_crawler
-import agentic_kg_discovery_ALTERNATIVE as akg 
 
-logger = logging.getLogger("agentic_kg_writer")
+logger = logging.getLogger("agentic_kg_discovery")
 
-
-def _discovery_log(message: str) -> None:
-    """Emit concise discovery diagnostics to Render/Gunicorn stdout."""
-    print(f"[policy-discovery] {message}", flush=True)
-
-MAX_AGENT_STEPS = 10
-AUDIT_LOG_PATH = "agentic_write_audit_log.json"
-
-HAS_PREVIOUS_POLICY_PROP = URIRef("http://example.org/onto.owl#hasPreviousPolicy")
-_POLICY_HISTORY_TS = __import__("re").compile(r"^\[([0-9T:+.\-Z]+)\]\s*", __import__("re").I)
-
-def retain_one_previous_policy(g: Graph, manufacturer_iri: URIRef) -> int:
-    """Keep exactly one archived policy: the newest timestamped prior policy."""
-    values = list(g.objects(manufacturer_iri, HAS_PREVIOUS_POLICY_PROP))
-    if len(values) <= 1:
-        return 0
-    def key(value):
-        m = _POLICY_HISTORY_TS.match(str(value))
-        return m.group(1) if m else ""
-    keep = max(values, key=key)
-    removed = 0
-    for value in values:
-        if value != keep:
-            g.remove((manufacturer_iri, HAS_PREVIOUS_POLICY_PROP, value))
-            removed += 1
-    return removed
+MAX_AGENT_STEPS = 8  # hard cap so a confused model can't loop forever / burn quota
+DCTERMS_MODIFIED = URIRef("http://purl.org/dc/terms/modified")
+DCTERMS_CREATED = URIRef("http://purl.org/dc/terms/created")
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# AUDIT LOGGING — append-only, separate file from the ontology itself
-# ═══════════════════════════════════════════════════════════════════════════
+#query graph
 
-def _append_audit_log(entry: dict[str, Any]):
-    p = Path(AUDIT_LOG_PATH)
-    log = []
-    if p.exists():
-        try:
-            log = json.loads(p.read_text(encoding="utf-8"))
-        except Exception:
-            logger.exception("Could not read existing audit log, starting fresh")
-            log = []
-    log.append(entry)
-    p.write_text(json.dumps(log, indent=2), encoding="utf-8")
+_ALLOWED_QUERY_FORMS = ("SELECT", "ASK", "CONSTRUCT", "DESCRIBE")
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# THE WRITE TOOL — this is the one new capability vs step6.
-# Bound to a single manufacturer_iri/policy_prop pair via closure, so the
-# model has no parameter that could redirect the write elsewhere.
-# ═══════════════════════════════════════════════════════════════════════════
-
-class GraphWriteSession:
+def query_graph(g: Graph, sparql: str, row_limit: int = 25) -> dict[str, Any]:
     """
-    Holds the mutable state for one discovery+write run: which fetches have
-    happened (so update_policy can verify evidence exists), and whether the
-    single allowed write has already been used.
+    Execute a read-only SPARQL query against the live ontology.
+
+    Refuses anything that isn't SELECT/ASK/CONSTRUCT/DESCRIBE — this is
+    the boundary that keeps the model able to LOOK at the graph without
+    being able to WRITE to it. (rdflib's query() method itself only runs
+    read queries — UPDATE goes through g.update() instead — but we also
+    reject suspicious tokens defensively in case of future refactors.)
     """
+    stripped = sparql.strip()
+    upper = stripped.upper()
 
-    def __init__(self, g: Graph, manufacturer_iri: URIRef, policy_prop: URIRef,
-                 company_name: str, groq_client: Any):
-        self.g = g
-        self.manufacturer_iri = manufacturer_iri
-        self.policy_prop = policy_prop
-        self.company_name = company_name
-        self.groq_client = groq_client
-        self.fetched_pages: dict[str, dict[str, Any]] = {}  # ref_token -> fetch result
-        self.write_used = False
-        self.write_result: Optional[dict[str, Any]] = None
-
-    def record_fetch(self, url: str, fetch_result: dict[str, Any]) -> str:
-        """Stores a fetched page under a short reference token the model can
-        cite later, instead of having the model retype policy text itself."""
-        ref = f"fetch_{len(self.fetched_pages) + 1}"
-        self.fetched_pages[ref] = {"url": url, **fetch_result}
-        return ref
-
-    def update_policy(self, fetched_text_ref: str, model_confidence: str,
-                       model_reasoning: str) -> dict[str, Any]:
-        if self.write_used:
-            return {"error": "A write has already been performed in this session. "
-                              "Only one update_policy call is permitted per run."}
-
-        fetch = self.fetched_pages.get(fetched_text_ref)
-        if not fetch:
-            return {"error": f"Unknown fetched_text_ref '{fetched_text_ref}'. "
-                              "You must call fetch_url first and cite its returned ref."}
-
-        # The preview stored by fetch_url is truncated for context-window reasons.
-        # Re-fetch the FULL text here so what gets written to the KG is complete,
-        # not the truncated preview the model saw.
-        url = fetch["url"]
-        _discovery_log(f"FINAL_REFETCH company={self.company_name} url={url}")
-        try:
-            refetched = policy_crawler.fetch_policy_source(url)
-            full_text = policy_crawler.extract_policy_text(refetched)
-            _discovery_log(
-                f"FINAL_REFETCH_SUCCESS company={self.company_name} url={refetched.get('url') or url} "
-                f"text_length={len(full_text)}"
-            )
-        except Exception as e:
-            _discovery_log(
-                f"FINAL_REFETCH_FAILED company={self.company_name} url={url} "
-                f"error={type(e).__name__}: {e}"
-            )
-            return {"error": f"Could not re-fetch full text from {url} for the final write: {e}"}
-
-        if len(full_text) < 500:
-            _discovery_log(
-                f"REJECT company={self.company_name} reason=text_too_short text_length={len(full_text)}"
-            )
-            return {"error": "Fetched page does not contain enough readable text "
-                              "to be confidently treated as a real privacy policy. Refusing to write."}
-
-        # DATE GATE — re-run the deterministic comparison independently of
-        # whatever the model believes. This is the actual gate, not the
-        # model's stated confidence.
-        live_date, llm_used = policy_crawler.extract_policy_date_agent(
-            full_text,
-            last_modified_header=refetched.get("last_modified_header"),
-            llm_client=self.groq_client,
+    if not any(upper.startswith(form) or f"\n{form}" in upper[:50].upper() for form in _ALLOWED_QUERY_FORMS):
+        # Also tolerate leading PREFIX lines before the query form.
+        lines_upper = [l.strip().upper() for l in stripped.splitlines() if l.strip()]
+        body_starts_ok = any(
+            l.startswith(form) for l in lines_upper for form in _ALLOWED_QUERY_FORMS
         )
-        stored_date = policy_crawler.get_stored_company_date(self.g, self.manufacturer_iri)
-        decision = policy_crawler.compare_policy_dates(stored_date, live_date)
-        checked_at = ts.mark_checked(self.g, self.manufacturer_iri)
-        _discovery_log(
-            f"DATE_DECISION company={self.company_name} stored={stored_date.parsed} "
-            f"live={live_date.parsed} date_confidence={live_date.confidence} "
-            f"should_update={decision['should_update']} status={decision['status']}"
-        )
+        if not body_starts_ok:
+            return {"error": "Only SELECT, ASK, CONSTRUCT, or DESCRIBE queries are permitted."}
 
-        if not decision["should_update"]:
-            _discovery_log(
-                f"REJECT company={self.company_name} reason=date_gate status={decision['status']} "
-                f"detail={decision['reason']}"
-            )
-            return {
-                "error": "Refused: deterministic date comparison does not support an update.",
-                "status": decision["status"],
-                "reason": decision["reason"],
-                "stored_date": str(stored_date.parsed),
-                "live_date": str(live_date.parsed),
-                "checked_at": checked_at,
-            }
+    if any(kw in upper for kw in ("INSERT", "DELETE", "DROP", "CLEAR", "LOAD", "CREATE GRAPH")):
+        return {"error": "Write operations are not permitted via this tool."}
 
-        # All checks passed — perform the actual write via the SAME function
-        # used everywhere else in the codebase. Old text is archived via
-        # hasPreviousPolicy inside upsert_policy(), not deleted.
-        update_info = ts.upsert_policy(self.g, self.manufacturer_iri, self.policy_prop, full_text)
-        retain_one_previous_policy(self.g, self.manufacturer_iri)
+    try:
+        results = g.query(stripped)
+    except Exception as e:
+        return {"error": f"SPARQL query failed: {e}"}
 
-        self.write_used = True
-        self.write_result = {
-            "status": "updated",
-            "url": url,
-            "live_date": str(live_date.parsed),
-            "stored_date_before": str(stored_date.parsed),
-            "new_text_length": len(full_text),
-            "previous_text_length": len(update_info.get("previous_policy") or ""),
-            "model_confidence": model_confidence,
-            "model_reasoning": model_reasoning,
-            "checked_at": checked_at,
-            "upsert_info": update_info,
-        }
-        _discovery_log(
-            f"WRITE_SUCCESS company={self.company_name} url={url} live_date={live_date.parsed} "
-            f"new_text_length={len(full_text)} previous_text_length={len(update_info.get('previous_policy') or '')}"
-        )
-        return self.write_result
+    rows = []
+    for i, row in enumerate(results):
+        if i >= row_limit:
+            rows.append({"_truncated": True, "note": f"Result set truncated at {row_limit} rows."})
+            break
+        if hasattr(row, "asdict"):
+            rows.append({k: str(v) for k, v in row.asdict().items()})
+        else:
+            rows.append([str(v) for v in row])
+
+    return {"row_count": len(rows), "rows": rows}
+
+
+def build_manufacturer_context_tools_payload(
+    manufacturer_iri: URIRef,
+    class_labels: list[str],
+    class_to_laws: dict[str, set],
+    law_to_class_idxs: dict[str, list[int]],
+    LAWS: list[dict],
+) -> dict[str, Any]:
+    """
+    A convenience helper (NOT a model-facing tool) that precomputes which
+    regulatory classes/laws are relevant to this manufacturer, so the
+    system prompt can mention it without the model needing several
+    query_graph round-trips just to discover the obvious starting point.
+    This mirrors how a human analyst would already know "this company is
+    scored against Oregon + NISTIR" before going to check their policy.
+    """
+    law_lookup = {l["id"]: l["label"] for l in LAWS}
+    laws_seen = set()
+    for c_iri, lids in class_to_laws.items():
+        laws_seen.update(lids)
+    return {
+        "applicable_law_labels": [law_lookup.get(lid, lid) for lid in sorted(laws_seen)],
+    }
+
+
+#web seearch and url get
+
+def search_web(query: str, max_results: int = 6) -> dict[str, Any]:
+    try:
+        results = policy_crawler.web_search_privacy_policy_urls(query, max_results=max_results)
+    except RuntimeError as e:
+        return {"error": str(e)}
+    return {
+        "results": [
+            {"url": r["url"], "title": r.get("title", ""), "snippet": r.get("snippet", "")}
+            for r in results
+        ]
+    }
+
+
+def fetch_url(url: str, max_chars: int = 4000) -> dict[str, Any]:
+    try:
+        fetched = policy_crawler.fetch_policy_source(url)
+        text = policy_crawler.extract_policy_text(fetched)
+    except Exception as e:
+        return {"error": str(e)}
+    return {
+        "final_url": fetched.get("url", url),
+        "last_modified_header": fetched.get("last_modified_header"),
+        "text_preview": text[:max_chars],
+        "text_length": len(text),
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# TOOL SCHEMAS — step6's three read tools + this module's write tool.
-# fetch_url is overridden here to also register the fetch in the session
-# (so update_policy can verify it later) and return a ref token.
+# TOOL SCHEMAS — what we hand to Groq's tools= parameter
 # ═══════════════════════════════════════════════════════════════════════════
 
-def _build_tool_schemas() -> list[dict]:
-    schemas = [s for s in akg.TOOL_SCHEMAS if s["function"]["name"] != "finish"]
-    schemas.append({
+TOOL_SCHEMAS = [
+    {
         "type": "function",
         "function": {
-            "name": "update_policy",
+            "name": "query_graph",
             "description": (
-                "Replace the stored privacy policy for this manufacturer in the knowledge graph "
-                "with the text from a page you already fetched. You must cite the fetched_text_ref "
-                "returned by a prior fetch_url call — you cannot supply policy text directly. "
-                "This will be refused if the underlying date comparison does not actually support "
-                "an update, even if you are confident it should. Only one write is allowed per run."
+                "Run a read-only SPARQL query against the privacy-compliance knowledge graph. "
+                "Use this to check what you already know before searching the web — e.g. what "
+                "regulatory classes this manufacturer is scored against, when their policy was "
+                "last modified, or what their previously stored policy URL was."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "fetched_text_ref": {
+                    "sparql": {
                         "type": "string",
-                        "description": "The ref token (e.g. 'fetch_1') returned by a previous fetch_url call.",
-                    },
-                    "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
-                    "reasoning": {"type": "string", "description": "Why you believe this page is the correct, current policy."},
+                        "description": "A SELECT, ASK, CONSTRUCT, or DESCRIBE SPARQL query. No INSERT/DELETE.",
+                    }
                 },
-                "required": ["fetched_text_ref", "confidence", "reasoning"],
+                "required": ["sparql"],
             },
         },
-    })
-    schemas.append({
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_web",
+            "description": "Search the web for candidate privacy-policy pages for a company.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search query, e.g. 'Acurite official privacy policy United States'."}
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "fetch_url",
+            "description": "Fetch a web page and return its cleaned visible text (truncated preview) plus an HTTP Last-Modified header if present.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "The URL to fetch."}
+                },
+                "required": ["url"],
+            },
+        },
+    },
+    {
         "type": "function",
         "function": {
             "name": "finish",
             "description": (
-                "Call this when you are done — either after a successful update_policy call, "
-                "or after concluding no update is warranted/possible. This ends the task."
+                "Call this when you have identified the official privacy policy URL with "
+                "reasonable confidence, OR when you are confident none can be found. "
+                "This ends the task."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "summary": {"type": "string", "description": "1-3 sentence summary of the outcome."},
+                    "selected_policy_url": {"type": ["string", "null"]},
+                    "confidence": {"type": "string", "enum": ["high", "medium", "low", "none"]},
+                    "reasoning_summary": {
+                        "type": "string",
+                        "description": "1-3 sentences explaining the decision, for the audit log.",
+                    },
                 },
-                "required": ["summary"],
+                "required": ["confidence", "reasoning_summary"],
             },
         },
-    })
-    return schemas
+    },
+]
+
+TOOL_IMPLS = {
+    "search_web": lambda args, ctx: search_web(args["query"]),
+    "fetch_url": lambda args, ctx: fetch_url(args["url"]),
+    "query_graph": lambda args, ctx: query_graph(ctx["g"], args["sparql"]),
+}
 
 
-SYSTEM_PROMPT = """You are a compliance maintenance agent with WRITE access to one specific \
-manufacturer's record in a knowledge graph. You may replace their stored privacy-policy text if, \
-and only if, you find clear evidence their live policy is newer than what is stored.
+SYSTEM_PROMPT = """You are a compliance research agent working over a knowledge graph of IoT \
+manufacturers and the privacy regulations they're scored against.
 
-Tools available: query_graph (read-only), search_web, fetch_url, update_policy, finish.
+Your task: find the official, current privacy-policy URL for a given manufacturer.
 
-Process expectations (not a rigid script — use judgment):
-  - Check the knowledge graph for the stored last-modified date before searching the web.
-  - Search for and fetch the manufacturer's current official policy page. Verify it actually
-    looks like a privacy policy (not a cookie notice, blog post, or unrelated page) before
-    trusting it.
-  - Only call update_policy if you have fetched a page that you believe is genuinely newer.
-    update_policy will independently re-check the dates and refuse if the evidence doesn't
-    actually support an update — your confidence alone is not sufficient, so don't try to call
-    it speculatively.
-  - If you cannot find clear evidence of an update, do NOT call update_policy — just call finish
-    and explain why.
-  - You may only write once per run. Use query_graph and fetch_url as much as you need BEFORE
-    committing to a write.
+You have three information-gathering tools (query_graph, search_web, fetch_url) and one tool \
+to end the task (finish). Decide for yourself which tools to use, in what order, and how many \
+times — there is no fixed sequence you must follow. Good practice, but not a strict rule:
+  - It's often useful to check the knowledge graph first (query_graph) to see what's already
+    known about this manufacturer (prior policy URL, last-modified date, which regulations
+    they're scored against) before spending a web search on it.
+  - If a search result looks ambiguous (e.g. could be a cookie-notice page, a blog post about
+    privacy, or a terms-of-service page rather than the actual policy), fetch it and check the
+    text before trusting the title/snippet alone.
+  - Stop and call finish() once you're reasonably confident, or once you've made a genuine
+    effort and concluded nothing reliable exists — don't loop indefinitely.
 
-Always end by calling finish()."""
+Always end by calling finish() with your decision."""
+
+
+def _build_kg_facts_prefix(facts: dict[str, Any]) -> str:
+    if not facts.get("applicable_law_labels"):
+        return ""
+    return ("Known from the system (not from the model): this manufacturer is currently scored "
+            f"against: {', '.join(facts['applicable_law_labels'])}.\n\n")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# THE LOOP — structurally the same shape as step6's loop, with the
-# write tool's execution routed through the session object above.
+# THE AGENTIC LOOP
 # ═══════════════════════════════════════════════════════════════════════════
 
-def run_agentic_discovery_and_update(
+def run_agentic_discovery(
     g: Graph,
     company_name: str,
     manufacturer_iri: URIRef,
-    policy_prop: URIRef,
     groq_client: Any,
-    onto_path: Optional[str] = None,
+    class_labels: Optional[list[str]] = None,
+    class_to_laws: Optional[dict[str, set]] = None,
+    law_to_class_idxs: Optional[dict[str, list]] = None,
+    LAWS: Optional[list[dict]] = None,
     model: str = "openai/gpt-oss-20b",
     max_steps: int = MAX_AGENT_STEPS,
 ) -> dict[str, Any]:
-    _discovery_log(f"START company={company_name} manufacturer_iri={manufacturer_iri}")
-    session = GraphWriteSession(g, manufacturer_iri, policy_prop, company_name, groq_client)
-    tool_schemas = _build_tool_schemas()
+    """
+    Runs the tool-calling loop until the model calls finish() or max_steps
+    is hit. Returns a dict with the final decision plus a full trace of
+    every tool call made, for auditing/demo purposes.
+    """
+    ctx = {"g": g}
     trace: list[dict[str, Any]] = []
+
+    kg_facts = {}
+    if class_to_laws is not None and LAWS is not None:
+        kg_facts = build_manufacturer_context_tools_payload(
+            manufacturer_iri, class_labels or [], class_to_laws, law_to_class_idxs or {}, LAWS or [])
+
+    user_prompt = (
+        f"{_build_kg_facts_prefix(kg_facts)}"
+        f"Manufacturer name: {company_name}\n"
+        f"Manufacturer graph IRI: {manufacturer_iri}\n\n"
+        f"Find the official current privacy-policy URL for this manufacturer."
+    )
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": (
-            f"Manufacturer name: {company_name}\n"
-            f"Manufacturer graph IRI: {manufacturer_iri}\n\n"
-            f"Check whether their stored privacy policy is outdated, and update it if and only "
-            f"if you find clear evidence it should be."
-        )},
+        {"role": "user", "content": user_prompt},
     ]
 
-    finish_summary = "Agent did not reach a conclusion within the step limit."
+    final_result = {
+        "selected_policy_url": None,
+        "confidence": "none",
+        "reasoning_summary": "Agent did not reach a conclusion within the step limit.",
+    }
 
     for step in range(max_steps):
-        # Once a write has happened, drop update_policy from the available
-        # tools so the model structurally cannot call it again this run.
-        active_schemas = tool_schemas
-        if session.write_used:
-            active_schemas = [s for s in tool_schemas if s["function"]["name"] != "update_policy"]
-
         resp = groq_client.chat.completions.create(
             model=model,
             messages=messages,
-            tools=active_schemas,
+            tools=TOOL_SCHEMAS,
             tool_choice="auto",
             temperature=0.1,
             max_tokens=600,
@@ -377,9 +363,10 @@ def run_agentic_discovery_and_update(
                           "tool_calls": msg.tool_calls})
 
         if not msg.tool_calls:
+            # Model responded with plain text instead of a tool call — nudge it.
             trace.append({"step": step, "type": "text_no_tool_call", "content": msg.content})
             messages.append({"role": "user", "content": "Please continue using tool calls, "
-                                                          "and call finish() when done."})
+                                                          "and call finish() once you have a decision."})
             continue
 
         finished = False
@@ -390,102 +377,49 @@ def run_agentic_discovery_and_update(
             except json.JSONDecodeError:
                 fargs = {}
 
-            _discovery_log(
-                f"tool_call company={company_name} step={step} tool={fname} "
-                f"args={json.dumps(fargs, default=str, ensure_ascii=True)[:700]}"
-            )
-
             if fname == "finish":
-                finish_summary = fargs.get("summary", "")
+                final_result = {
+                    "selected_policy_url": fargs.get("selected_policy_url"),
+                    "confidence": fargs.get("confidence", "none"),
+                    "reasoning_summary": fargs.get("reasoning_summary", ""),
+                }
                 trace.append({"step": step, "type": "finish", "args": fargs})
-                messages.append({"role": "tool", "tool_call_id": tc.id, "name": fname,
-                                  "content": json.dumps({"status": "task_ended"})})
                 finished = True
+                # Still need a tool result message for this call id, even though
+                # we're ending — the API expects every tool_call to be answered.
+                messages.append({
+                    "role": "tool", "tool_call_id": tc.id, "name": fname,
+                    "content": json.dumps({"status": "task_ended"}),
+                })
                 continue
 
-            elif fname == "query_graph":
-                tool_result = akg.query_graph(g, fargs.get("sparql", ""))
-
-            elif fname == "search_web":
-                tool_result = akg.search_web(fargs.get("query", ""))
-
-            elif fname == "fetch_url":
-                fetch_url = fargs.get("url", "")
-                raw_result = akg.fetch_url(fetch_url)
-                if "error" not in raw_result:
-                    ref = session.record_fetch(fetch_url, raw_result)
-                    tool_result = {**raw_result, "fetched_text_ref": ref}
-                    _discovery_log(
-                        f"fetch SUCCESS company={company_name} url={fetch_url} "
-                        f"ref={ref} text_length={len(str(raw_result.get('text') or ''))}"
-                    )
-                else:
-                    tool_result = raw_result
-                    _discovery_log(
-                        f"fetch FAILED company={company_name} url={fetch_url} "
-                        f"error={str(raw_result.get('error'))[:500]}"
-                    )
-
-            elif fname == "update_policy":
-                tool_result = session.update_policy(
-                    fetched_text_ref=fargs.get("fetched_text_ref", ""),
-                    model_confidence=fargs.get("confidence", ""),
-                    model_reasoning=fargs.get("reasoning", ""),
-                )
-                _discovery_log(
-                    f"update_policy company={company_name} status={tool_result.get('status', 'error')} "
-                    f"error={str(tool_result.get('error', ''))[:500]}"
-                )
-
-            else:
+            impl = TOOL_IMPLS.get(fname)
+            if impl is None:
                 tool_result = {"error": f"Unknown tool {fname}"}
+            else:
+                try:
+                    tool_result = impl(fargs, ctx)
+                except Exception as e:
+                    tool_result = {"error": str(e)}
 
             trace.append({"step": step, "type": "tool_call", "tool": fname,
                           "args": fargs, "result_preview": str(tool_result)[:500]})
-            messages.append({"role": "tool", "tool_call_id": tc.id, "name": fname,
-                              "content": json.dumps(tool_result, default=str)[:6000]})
+
+            messages.append({
+                "role": "tool", "tool_call_id": tc.id, "name": fname,
+                "content": json.dumps(tool_result)[:6000],  # keep context bounded
+            })
 
         if finished:
             break
     else:
         trace.append({"step": max_steps, "type": "step_limit_reached"})
 
-    checked_at = ts.mark_checked(g, manufacturer_iri)
-    # Serialize the graph to disk ONLY if a write actually happened — no
-    # point re-saving an unchanged file, and it keeps "did we touch disk"
-    # easy to reason about from the return value alone.
-    serialized = False
-    if session.write_used and onto_path:
-        try:
-            g.serialize(destination=str(onto_path), format="xml")
-            serialized = True
-        except Exception:
-            logger.exception("Graph write succeeded in memory but serialize-to-disk failed")
-
-    audit_entry = {
-        "checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "company": company_name,
-        "manufacturer_iri": str(manufacturer_iri),
-        "wrote_update": session.write_used,
-        "serialized_to_disk": serialized,
-        "write_result": session.write_result,
-        "finish_summary": finish_summary,
-        "tool_calls_made": sum(1 for t in trace if t["type"] == "tool_call"),
-    }
-    _append_audit_log(audit_entry)
-    _discovery_log(
-        f"END company={company_name} wrote_update={session.write_used} "
-        f"serialized_to_disk={serialized} tool_calls={audit_entry['tool_calls_made']} "
-        f"summary={finish_summary}"
-    )
-
     return {
         "company": company_name,
-        "wrote_update": session.write_used,
-        "serialized_to_disk": serialized,
-        "write_result": session.write_result,
-        "finish_summary": finish_summary,
-        "checked_at": checked_at, 
+        "final_url": final_result["selected_policy_url"],
+        "confidence": final_result["confidence"],
+        "reasoning_summary": final_result["reasoning_summary"],
+        "tool_calls_made": sum(1 for t in trace if t["type"] == "tool_call"),
         "reasoning_trace": trace,
-        "audit_entry": audit_entry,
     }
