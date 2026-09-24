@@ -1,1290 +1,1225 @@
-import re, os, json, hashlib
-from pathlib import Path
-from functools import lru_cache
+from __future__ import annotations
 
-import numpy as np
-from flask import Flask, render_template, request, jsonify, send_file
-from rdflib import Graph, URIRef, RDF, RDFS, OWL, Literal, XSD
-from sentence_transformers import SentenceTransformer
-from werkzeug.utils import secure_filename
-from PyPDF2 import PdfReader
-from groq import Groq
+import html
+import json
+import os
+import re
+import urllib.request
+import urllib.parse
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
+from html.parser import HTMLParser
+from typing import Any, Callable, Optional
 
-# Load .env into os.environ. A .env file on disk does nothing on its own —
-# this call is what actually makes GROQ_API_KEY / BRAVE_SEARCH_API_KEY from
-# your .env file visible to os.environ.get(...) below. On Render there is
-# no .env file; Render injects real environment variables directly, so
-# load_dotenv() just finds nothing and os.environ already has what it needs.
-from dotenv import load_dotenv
-load_dotenv()
-
-import step2_state_detector as state_detector
-import step4a_timestamps as ts
-import step4b_regulation_update as reg_update
-import step1_add_regulation as reg_add
-import step3_agentic_weighted_grader as wgrader
-import agentic_policy_update_crawler as policy_crawler
-import agentic_kg_discovery_ALTERNATIVEpt2 as agentic_writer
-
-# =============================================================================
-# FLASK
-# =============================================================================
-app = Flask(__name__)
-app.register_blueprint(wgrader.bp)
-UPLOAD_FOLDER = "uploads"
-app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
-app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-
-def allowed_file(fn):
-    return "." in fn and fn.rsplit(".", 1)[1].lower() == "pdf"
-
-# =============================================================================
-# CONFIG
-# =============================================================================
-CFG           = json.load(open("config.json", encoding="utf-8"))
-ONTO_PATH     = Path(os.environ.get("ONTO_PATH", "") or CFG["ontology_path"]).resolve()
-MFG_CLS       = URIRef(CFG["manufacturer_class_iri"])
-POLICY_PROP   = URIRef(CFG["policy_property_iri"])
-LAW_PREDS     = [URIRef(p) for p in CFG.get("law_annotation_predicates", [])]
-LAWS          = CFG.get("laws", [])
-THRESHOLD     = float(CFG.get("coverage_threshold", 0.27))
-EMBED_MODEL   = CFG.get("embedding_model_name", "all-MiniLM-L6-v2")
-
-USER_ADDED_PROP       = URIRef("http://example.org/onto.owl#userAddedManufacturer")
-APPLIES_TO_STATE_PROP = URIRef("http://example.org/onto.owl#appliesToState")
-ASSESSMENT_SCORE_PROP = URIRef("http://example.org/onto.owl#AssessmentScore")
-LAW_ASSESSMENT_SCORE_PROPS = {
-    "CA_SB_327": URIRef("http://example.org/onto.owl#CaliforniaAssessmentScore"),
-    "OR_HB_2395": URIRef("http://example.org/onto.owl#OregonAssessmentScore"),
-    "NISTIR_8259": URIRef("http://example.org/onto.owl#NISTIR8259AssessmentScore"),
-    "IoT_Cyber_Act_2020": URIRef("http://example.org/onto.owl#PublicLaw116207AssessmentScore"),
-}
-
-# Dynamically maintained count of regulatory classes/statutes represented in the KG
-# for each manufacturer. The values are recomputed from the current regulatory
-# class corpus rather than hard-coded, so regulation updates automatically
-# change the stored counts.
-LAW_STATUTE_COUNT_PROPS = {
-    "CA_SB_327": URIRef("http://example.org/onto.owl#CaliforniaStatutesFound"),
-    "OR_HB_2395": URIRef("http://example.org/onto.owl#OregonStatutesFound"),
-    "NISTIR_8259": URIRef("http://example.org/onto.owl#NISTIR8259StatutesFound"),
-    "IoT_Cyber_Act_2020": URIRef("http://example.org/onto.owl#PublicLaw116207StatutesFound"),
-}
-
-# =============================================================================
-# STATE NORMALISATION  (frontend value → STATE_CATALOG ID)
-# =============================================================================
-_STATE_MAP = {
-    "all": "all", "oregon": "OR", "california": "CA",
-    "texas": "TX",
-    # Keep federal sources separate so selecting/asking for NISTIR does not
-    # also pull Public Law 116-207 into the chatbot response.
-    "nistir": "NISTIR_8259",
-    "plaw": "IoT_Cyber_Act_2020",
-    "or": "OR", "ca": "CA", "tx": "TX", "us_fed": "US_FED",
-    "nist": "NISTIR_8259", "8259": "NISTIR_8259",
-    "public_law": "IoT_Cyber_Act_2020", "pl_116_207": "IoT_Cyber_Act_2020",
-}
-def norm_state(raw):
-    return _STATE_MAP.get((raw or "").strip().lower(), "all")
-
-# =============================================================================
-# LOAD ONTOLOGY
-# =============================================================================
-print(f"[load] {ONTO_PATH}")
-g = Graph()
-g.parse(str(ONTO_PATH))
-print(f"[load] {len(g)} triples")
-
-def local_name(iri):
-    s = str(iri).rsplit("#", 1)[-1].rstrip("/").rsplit("/", 1)[-1]
-    return re.sub(r"([a-z])([A-Z])", r"\1 \2", s).replace("_", " ").replace("-", " ")
-
-# =============================================================================
-# BUILD REGULATORY CLASS CORPUS (directly from KG annotations)
-# =============================================================================
-_LABEL_FIXES = {
-    "iot device": "IoT Device", "io tdevice": "IoT Device",
-    "iotdevice": "IoT Device", "network interface": "Network Interface",
-}
-
-def _class_label(c):
-    lbls = [str(o) for o in g.objects(c, RDFS.label)]
-    raw = lbls[0] if lbls else local_name(str(c))
-    return _LABEL_FIXES.get(raw.lower().strip(), raw)
+from rdflib import Graph, URIRef, Literal, XSD
 
 
-#!!!! searches for hasLaw annots
-def _law_ids_for_class(c):
-    ids = set()
-    for pred in LAW_PREDS:
-        for obj in g.objects(c, pred):
-            txt = str(obj).lower()
-            for law in LAWS:
-                if any(kw.lower() in txt for kw in law.get("keywords", [])):
-                    ids.add(law["id"])
-    return ids
+def _discovery_log(message: str) -> None:
+    """Emit concise policy-discovery diagnostics to Render/Gunicorn stdout."""
+    print(f"[policy-discovery] {message}", flush=True)
 
-def _annotation(c):
-    parts = []
-    for pred in LAW_PREDS:
-        for obj in g.objects(c, pred):
-            parts.append(str(obj).strip())
-    return " | ".join(parts)
+DCTERMS_CREATED = URIRef("http://purl.org/dc/terms/created")
+DCTERMS_MODIFIED = URIRef("http://purl.org/dc/terms/modified")
 
-# Build parallel lists
-class_iris, class_labels, class_texts = [], [], []
-class_descs, class_to_laws = {}, {}
-
-for c in g.subjects(RDF.type, OWL.Class):
-    if not isinstance(c, URIRef):
-        continue
-    law_ids = _law_ids_for_class(c)
-    if not law_ids:
-        continue
-    label   = _class_label(c)
-    comment = " ".join(str(o) for o in g.objects(c, RDFS.comment)).strip()
-    ann     = _annotation(c)
-    class_iris.append(str(c))
-    class_labels.append(label)
-    class_texts.append(f"{label} {comment} {ann} {local_name(str(c))}")
-    class_descs[str(c)]   = comment or ann[:200]
-    class_to_laws[str(c)] = law_ids
-
-# Deduplicate by label
-seen, keep = set(), []
-for i, lbl in enumerate(class_labels):
-    if lbl.lower() not in seen:
-        seen.add(lbl.lower()); keep.append(i)
-class_iris    = [class_iris[i]   for i in keep]
-class_labels  = [class_labels[i] for i in keep]
-class_texts   = [class_texts[i]  for i in keep]
-class_descs   = {class_iris[j]: class_descs[class_iris[keep[j]]] for j in range(len(keep))}
-class_to_laws = {class_iris[j]: class_to_laws[class_iris[keep[j]]] for j in range(len(keep))}
-
-if not class_iris:
-    raise SystemExit("No regulatory classes found in ontology.")
-
-law_to_class_idxs = {law["id"]: [] for law in LAWS}
-for idx, c_iri in enumerate(class_iris):
-    for lid in class_to_laws[c_iri]:
-        if lid in law_to_class_idxs:
-            law_to_class_idxs[lid].append(idx)
-
-for law in LAWS:
-    print(f"[init] {law['id']}: {len(law_to_class_idxs[law['id']])} classes")
-
-
-def regulatory_statute_counts():
-    """Return current KG regulatory-class counts for each tracked document.
-
-    Counts are rebuilt directly from the graph so a regulation upload/update
-    is reflected immediately; they are not hard-coded constants. Classes are
-    de-duplicated by their display label, matching the assessment corpus.
-    """
-    counts = {law_id: 0 for law_id in LAW_STATUTE_COUNT_PROPS}
-    seen_by_law = {law_id: set() for law_id in LAW_STATUTE_COUNT_PROPS}
-
-    for c in g.subjects(RDF.type, OWL.Class):
-        if not isinstance(c, URIRef):
-            continue
-        law_ids = _law_ids_for_class(c)
-        if not law_ids:
-            continue
-        label = _class_label(c).strip().lower()
-        if not label:
-            continue
-        for law_id in law_ids & set(LAW_STATUTE_COUNT_PROPS):
-            seen_by_law[law_id].add(label)
-
-    for law_id in counts:
-        counts[law_id] = len(seen_by_law[law_id])
-    return counts
-
-
-def update_manufacturer_statute_counts(manufacturer_iri):
-    """Persist the current four regulatory class counts on one manufacturer."""
-    iri = URIRef(manufacturer_iri)
-    counts = regulatory_statute_counts()
-    for law_id, prop in LAW_STATUTE_COUNT_PROPS.items():
-        g.set((iri, prop, Literal(counts.get(law_id, 0), datatype=XSD.integer)))
-    return counts
-
-
-def refresh_all_manufacturer_statute_counts(persist=False):
-    """Refresh statute/class counts for every manufacturer from the current KG corpus."""
-    counts = regulatory_statute_counts()
-    for mfg in manufacturers:
-        update_manufacturer_statute_counts(mfg["iri"])
-    if persist:
-        g.serialize(destination=str(ONTO_PATH), format="xml")
-    print(f"[statutes] Refreshed manufacturer counts: {counts}")
-    return counts
-
-print(f"[init] Encoding {len(class_texts)} classes with BERT...")
-_bert = SentenceTransformer(EMBED_MODEL)
-class_embeddings = _bert.encode(class_texts, convert_to_numpy=True, normalize_embeddings=True)
-
-# =============================================================================
-# LOAD MANUFACTURERS
-# =============================================================================
-_ALLOWED = {"ADT","Emerson","Fitbit",
-            "Panasonic","Ring","Vivint"}
-_NAME_FIX = {"adt":"ADT"}
-
-def clean_name(n):
-    return _NAME_FIX.get(n.lower().strip(), n.title())
-
-manufacturers = []
-for row in g.query(f"SELECT DISTINCT ?i WHERE {{ ?i a ?t . ?t <{RDFS.subClassOf}>* <{MFG_CLS}> . }}"):
-    inst = row.i
-    lbls = [str(o) for o in g.objects(inst, RDFS.label)]
-    name = clean_name(lbls[0] if lbls else local_name(str(inst)))
-    pols = [str(o) for o in g.objects(inst, POLICY_PROP) if isinstance(o, Literal)]
-    pol  = max(pols, key=len) if pols else ""
-    added = any(True for _ in g.objects(inst, USER_ADDED_PROP))
-    manufacturers.append({"iri": str(inst), "name": name, "policy": pol, "user_added": added})
-
-manufacturers.sort(key=lambda m: m["name"].lower())
-_fil = [m for m in manufacturers if m["user_added"] or any(a.lower() in m["name"].lower() for a in _ALLOWED)]
-manufacturers = _fil if _fil else manufacturers
-print(f"[init] {len(manufacturers)} manufacturers")
-
-# =============================================================================
-# GROQ + WGRADER
-# =============================================================================
-groq_api_key = os.environ.get("GROQ_API_KEY")
-if not groq_api_key:
-    raise RuntimeError(
-        "GROQ_API_KEY is not set. Add it to your .env file (local) or "
-        "Render's environment variables (deployed)."
-    )
-groq_client = Groq(api_key=groq_api_key)
-
-wgrader.init_grader(
-    groq_client=groq_client, manufacturers=manufacturers,
-    class_iris=class_iris, class_labels=class_labels,
-    class_descs=class_descs, class_to_laws=class_to_laws,
-    law_to_class_idxs=law_to_class_idxs, LAWS=LAWS,
-    COVERAGE_THRESHOLD=THRESHOLD,
-    rank_classes_for_policy=lambda p, s="all": ([], None),
-    state_detector=state_detector,
+DEFAULT_USER_AGENT = (
+    "Mozilla/5.0 (compatible; PrivacyPolicyComplianceAnalyzer/1.0; "
+    "+https://example.org/privacy-policy-compliance-analyzer)"
 )
 
-# =============================================================================
-# POLICY HISTORY CLEANUP
-# =============================================================================
-HAS_PREVIOUS_POLICY_PROP = URIRef("http://example.org/onto.owl#hasPreviousPolicy")
-_POLICY_HISTORY_TS = re.compile(r"^\[([0-9T:+.\-Z]+)\]\s*", re.I)
-
-def retain_one_previous_policy(manufacturer_iri):
-    """Keep only the newest archived policy for a manufacturer."""
-    iri = URIRef(manufacturer_iri)
-    values = list(g.objects(iri, HAS_PREVIOUS_POLICY_PROP))
-    if len(values) <= 1:
-        return 0
-
-    def history_key(value):
-        m = _POLICY_HISTORY_TS.match(str(value))
-        return m.group(1) if m else ""
-
-    keep = max(values, key=history_key)
-    removed = 0
-    for value in values:
-        if value != keep:
-            g.remove((iri, HAS_PREVIOUS_POLICY_PROP, value))
-            removed += 1
-    return removed
-
-def cleanup_all_policy_history(persist=True):
-    """Migrate existing manufacturer instances to exactly one prior policy."""
-    subjects = set(g.subjects(HAS_PREVIOUS_POLICY_PROP, None))
-    removed = sum(retain_one_previous_policy(s) for s in subjects)
-    if persist and removed:
-        g.serialize(destination=str(ONTO_PATH), format="xml")
-    print(f"[policy-history] Removed {removed} superseded prior policies")
-    return removed
-
-# =============================================================================
-# CORE SCORING  —  single function used by BOTH /detail AND /chat
-# =============================================================================
-def _active_laws(state):
-    if state == "all":
-        return LAWS
-
-    # Direct single-law filters used by the frontend for NISTIR and Public Law.
-    # This prevents a NISTIR-only question from being expanded to every federal law.
-    direct_law_ids = {l["id"] for l in LAWS}
-    if state in direct_law_ids:
-        return [l for l in LAWS if l["id"] == state]
-
-    ids = {l["id"] for l in state_detector.applicable_laws([state], LAWS)}
-    return [l for l in LAWS if l["id"] in ids]
+# ---------------------------------------------------------------------------
+# Agent 1 now uses real web search discovery instead of guessed URL paths.
+# ---------------------------------------------------------------------------
 
 
-def _law_annotations_for_score(law):
-    """Collect KG law annotations that correspond to one legislation."""
-    hits = []
-    keywords = [law.get("label", ""), law.get("id", "").replace("_", " ")] + law.get("keywords", [])
-    keywords = [k.lower() for k in keywords if k]
-    for c_iri in [class_iris[i] for i in law_to_class_idxs.get(law["id"], [])]:
-        for pred in LAW_PREDS:
-            for obj in g.objects(URIRef(c_iri), pred):
-                raw = str(obj).strip()
-                if any(k in raw.lower() for k in keywords):
-                    hits.append(raw)
-    return list(dict.fromkeys(hits))
 
-def compute_scores(policy, state):
-    """
-    Returns dict:
-      sims         np.ndarray | None
-      law_coverage list[{id, label, coverage_percent, num_classes, num_above}]
-      overall      float
-      covered      list[{class_label, law_labels, bert_sim, desc, annotation}]
-      missing      list[{class_label, law_label, bert_sim, gap, desc, annotation}]
-      weighted     dict | None  (from wgrader cache)
-    """
-    if not (policy or "").strip():
-        return {"sims": None, "law_coverage": [], "overall": 0.0,
-                "covered": [], "missing": [], "weighted": None}
-
-    q_emb = _bert.encode([policy], convert_to_numpy=True, normalize_embeddings=True)[0]
-    sims  = np.dot(class_embeddings, q_emb)
-
-    active     = _active_laws(state)
-    active_ids = {l["id"] for l in active}
-
-    # Flat coverage per law
-    law_coverage, total_cls, total_above = [], 0, 0
-    for law in active:
-        lid  = law["id"]
-        idxs = law_to_class_idxs.get(lid, [])
-        if not idxs:
-            law_coverage.append({
-                "id": lid, "label": law["label"],
-                "coverage_percent": 0.0, "num_classes": 0, "num_above": 0,
-                "score_property": str(LAW_ASSESSMENT_SCORE_PROPS.get(lid, "")),
-                "annotations": [],
-            })
-            continue
-        above = sum(1 for i in idxs if float(sims[i]) >= THRESHOLD)
-        pct   = round(100.0 * above / len(idxs), 2)
-        law_coverage.append({
-            "id": lid, "label": law["label"],
-            "coverage_percent": pct, "num_classes": len(idxs), "num_above": above,
-            "score_property": str(LAW_ASSESSMENT_SCORE_PROPS.get(lid, "")),
-            "annotations": _law_annotations_for_score(law),
-        })
-        total_cls += len(idxs); total_above += above
-    overall = round(100.0 * total_above / total_cls, 2) if total_cls else 0.0
-
-    # Covered classes
-    covered = []
-    for idx, sim in enumerate(sims):
-        sim = float(sim)
-        if sim < THRESHOLD:
-            continue
-        c_iri = class_iris[idx]
-        law_ids = class_to_laws.get(c_iri, set()) & active_ids
-        if not law_ids:
-            continue
-        covered.append({
-            "class_label": class_labels[idx],
-            "law_labels":  [l["label"] for l in LAWS if l["id"] in law_ids],
-            "bert_sim":    round(sim, 4),
-            "desc":        class_descs.get(c_iri, ""),
-            "annotation":  _annotation(URIRef(c_iri)),
-        })
-    covered.sort(key=lambda x: x["bert_sim"], reverse=True)
-
-    # Missing classes — pull annotation text per law from KG
-    missing = []
-    for law in active:
-        lid = law["id"]
-        for idx in law_to_class_idxs.get(lid, []):
-            sim = float(sims[idx])
-            if sim >= THRESHOLD:
-                continue
-            c_iri = class_iris[idx]
-            node  = URIRef(c_iri)
-            ann_parts = []
-            for pred in LAW_PREDS:
-                for obj in g.objects(node, pred):
-                    raw = str(obj)
-                    if any(kw.lower() in raw.lower() for kw in law.get("keywords", [])):
-                        ann_parts.append(raw.strip())
-                        break
-            missing.append({
-                "class_label": class_labels[idx],
-                "law_label":   law["label"],
-                "bert_sim":    round(sim, 4),
-                "gap":         round(THRESHOLD - sim, 4),
-                "desc":        class_descs.get(c_iri, ""),
-                "annotation":  " | ".join(ann_parts[:2]),
-            })
-    missing.sort(key=lambda x: x["gap"], reverse=True)
-
-    # Weighted score from cache (do NOT run agents here; use /weighted_grade_trigger)
-    weighted = None
-    try:
-        from step3_agentic_weighted_grader import (_cache_key, _weight_cache,
-                                                   _get_active_laws, agent3_weighted_grader)
-        al = _get_active_laws(state)
-        ck = _cache_key([l["id"] for l in al])
-        if ck in _weight_cache:
-            weighted = agent3_weighted_grader(
-                {"name": "?", "policy": policy}, sims, _weight_cache[ck], al, state)
-    except Exception:
-        pass
-
-    return {"sims": sims, "law_coverage": law_coverage, "overall": overall,
-            "covered": covered, "missing": missing, "weighted": weighted}
+@dataclass
+class DateCandidate:
+    raw: str
+    parsed: Optional[datetime]
+    label: str
+    confidence: str
+    source: str  # regex | llm | stored
+    evidence: str = ""
 
 
-def update_assessment_score(manufacturer_iri, policy):
-    """Persist the overall score plus one score for each requested regulation."""
-    iri = URIRef(manufacturer_iri)
-    if not (policy or "").strip():
-        overall = 0.0
-        per_law = {lid: 0.0 for lid in LAW_ASSESSMENT_SCORE_PROPS}
-    else:
-        all_scores = compute_scores(policy, "all")
-        overall = float(all_scores["overall"])
-        per_law = {
-            item["id"]: float(item["coverage_percent"])
-            for item in all_scores["law_coverage"]
-            if item["id"] in LAW_ASSESSMENT_SCORE_PROPS
-        }
+class _VisibleTextParser(HTMLParser):
+    """Small dependency-free HTML visible-text extractor."""
 
-    g.set((iri, ASSESSMENT_SCORE_PROP,
-           Literal(f"{overall:.2f}", datatype=XSD.decimal)))
-    for law_id, prop in LAW_ASSESSMENT_SCORE_PROPS.items():
-        g.set((iri, prop, Literal(f"{per_law.get(law_id, 0.0):.2f}", datatype=XSD.decimal)))
+    SKIP_TAGS = {"script", "style", "noscript", "svg", "canvas"}
+    BLOCK_TAGS = {
+        "p", "div", "section", "article", "header", "footer", "main", "br",
+        "li", "ul", "ol", "h1", "h2", "h3", "h4", "h5", "h6", "tr", "td",
+    }
 
-    # Keep the four regulatory-document class counts synchronized whenever a
-    # manufacturer is assessed, including manual and automated update flows.
-    update_manufacturer_statute_counts(iri)
-    return round(overall, 2)
+    def __init__(self) -> None:
+        super().__init__()
+        self._skip_depth = 0
+        self.parts: list[str] = []
 
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, Optional[str]]]) -> None:
+        tag = tag.lower()
+        if tag in self.SKIP_TAGS:
+            self._skip_depth += 1
+        if tag in self.BLOCK_TAGS:
+            self.parts.append("\n")
 
-def refresh_all_assessment_scores(persist=True):
-    """Keep overall and per-regulation assessment scores synchronized."""
-    updated = 0
-    for mfg in manufacturers:
-        retain_one_previous_policy(mfg["iri"])
-        update_assessment_score(mfg["iri"], mfg.get("policy", ""))
-        updated += 1
-    if persist:
-        g.serialize(destination=str(ONTO_PATH), format="xml")
-    print(f"[assessment] Updated overall + four regulation scores for {updated} manufacturers")
-    return updated
+    def handle_endtag(self, tag: str) -> None:
+        tag = tag.lower()
+        if tag in self.SKIP_TAGS and self._skip_depth:
+            self._skip_depth -= 1
+        if tag in self.BLOCK_TAGS:
+            self.parts.append("\n")
 
+    def handle_data(self, data: str) -> None:
+        if self._skip_depth:
+            return
+        data = html.unescape(data or "").strip()
+        if data:
+            self.parts.append(data)
 
-# Migrate old policy history before the first score refresh.
-cleanup_all_policy_history(persist=True)
-
-# Initialize persisted manufacturer assessment scores once the scoring function is available.
-refresh_all_assessment_scores(persist=True)
+    def get_text(self) -> str:
+        text = " ".join(self.parts)
+        text = re.sub(r"[ \t\r\f\v]+", " ", text)
+        text = re.sub(r"\n\s*\n+", "\n", text)
+        return text.strip()
 
 
-# =============================================================================
-# CHAT CONTEXT — built from compute_scores(), reads KG directly
-# =============================================================================
-def _trim(text, n=260):
-    text = re.sub(r"\s+", " ", (text or "")).strip()
-    return text if len(text) <= n else text[:n].rstrip() + "..."
+#agent1 url fetcher
 
+def fetch_policy_source(url: str, timeout: int = 20) -> dict[str, Any]:
+    """Fetch a URL and return content bytes + metadata."""
+    if not url or not str(url).strip():
+        raise ValueError("policy_url is required")
 
-def _law_annotation_for_class(c_iri, law):
-    """Return only the rdfs:hasLaw-style annotation text that belongs to one law."""
-    node = URIRef(c_iri)
-    hits = []
-    keywords = [law.get("label", ""), law.get("id", "").replace("_", " ")] + law.get("keywords", [])
-    keywords = [k.lower() for k in keywords if k]
-    for pred in LAW_PREDS:
-        for obj in g.objects(node, pred):
-            raw = str(obj).strip()
-            low = raw.lower()
-            if any(k in low for k in keywords):
-                hits.append(raw)
-    return " | ".join(dict.fromkeys(hits))
+    req = urllib.request.Request(
+        str(url).strip(),
+        headers={"User-Agent": DEFAULT_USER_AGENT, "Accept": "text/html,application/pdf,*/*"},
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        content = resp.read()
+        content_type = resp.headers.get("content-type", "")
+        last_modified = resp.headers.get("last-modified")
+        final_url = resp.geturl()
 
-
-def _section_hint(text):
-    """Best-effort section/reference extraction from KG law annotation text."""
-    if not text:
-        return "No section identifier found in KG annotation"
-    patterns = [
-        r"(?:section|sec\.|§)\s*[0-9A-Za-z_.:-]+",
-        r"ORS\s*[0-9A-Za-z_.:-]+",
-        r"Cal\.?\s+Civ\.?\s+Code\s*§?\s*[0-9A-Za-z_.:-]+",
-        r"NISTIR\s*8259(?:A)?",
-        r"PL\s*116-207|Public Law\s*116-207",
-        r"HB\s*2395|SB-327|HB\s*4",
-    ]
-    for pat in patterns:
-        m = re.search(pat, text, flags=re.I)
-        if m:
-            return m.group(0)
-    return "No section identifier found in KG annotation"
-
-#!!! collects annots from requested law from the user 
-def law_rules_from_kg(laws=None):
-    """Build a clean law -> rule/class list directly from rdfs:hasLaw annotations."""
-    laws = laws or LAWS
-    out = {}
-    for law in laws:
-        rules = []
-        for idx in law_to_class_idxs.get(law["id"], []):
-            c_iri = class_iris[idx]
-            ann = _law_annotation_for_class(c_iri, law)
-            rules.append({
-                "class_label": class_labels[idx],
-                "section_hint": _section_hint(ann),
-                "annotation": ann or class_descs.get(c_iri, ""),
-            })
-        # de-duplicate by class label while preserving order
-        seen = set()
-        clean = []
-        for r in rules:
-            key = r["class_label"].lower()
-            if key not in seen:
-                seen.add(key)
-                clean.append(r)
-        out[law["id"]] = {"id": law["id"], "label": law["label"], "rules": clean}
-    return out
-
-
-def law_comparison_from_kg(laws=None):
-    """Return Law A has X / Law B has Y / common Z based on KG law annotations."""
-    rules_by_law = law_rules_from_kg(laws)
-    label_to_laws = {}
-    for lid, law_data in rules_by_law.items():
-        for r in law_data["rules"]:
-            label_to_laws.setdefault(r["class_label"], set()).add(lid)
-
-    common = sorted([lbl for lbl, lids in label_to_laws.items() if len(lids) >= 2])
-    unique = {}
-    for lid, law_data in rules_by_law.items():
-        unique[lid] = sorted([
-            r["class_label"] for r in law_data["rules"]
-            if len(label_to_laws.get(r["class_label"], set())) == 1
-        ])
-
-    return {"rules_by_law": rules_by_law, "common_rules": common, "unique_rules": unique}
-
-
-def _explicit_laws_from_question(question):
-    """Return only laws explicitly named/aliased in the user's question."""
-    q = (question or "").lower()
-    wanted = []
-    for law in LAWS:
-        if law.get("id", "").lower() in q or law.get("label", "").lower() in q:
-            wanted.append(law)
-            continue
-        aliases = {
-            "OR_HB_2395": ["oregon", "hb 2395", "oregon hb"],
-            "CA_SB_327": ["california", "sb-327", "sb 327"],
-            "TX_HB_4": ["texas", "hb 4", "tx hb"],
-            "IoT_Cyber_Act_2020": ["iot cybersecurity", "iot cybersecurity improvement", "pl 116-207", "pl 116 207", "public law", "plaw", "federal"],
-            "NISTIR_8259": ["nist", "nistir", "8259"],
-        }.get(law.get("id", ""), [])
-        if any(a in q for a in aliases):
-            wanted.append(law)
-    return wanted
-
-
-def _wanted_laws_from_question(question, state="all"):
-    """Keep chat context small by only sending laws the user asked about."""
-    explicit = _explicit_laws_from_question(question)
-    if explicit:
-        return explicit
-    if state and state != "all":
-        return _active_laws(state)
-    return LAWS
-
-#!!! guides what user is asking for (not llm due to token calls
-def _question_intent(question):
-    q = (question or "").lower()
     return {
-        "comparison": any(w in q for w in ["compare", "difference", "different", "common", "overlap", "versus", " vs ", "same"]),
-        "rules": any(w in q for w in ["rules", "rule", "requirements", "classes", "make up", "specified", "legislation annotations"]),
-        "missing": any(w in q for w in ["missing", "non-compliant", "non compliant", "does not comply", "fails", "gap", "weakly"]),
-        "score": any(w in q for w in ["score", "coverage", "percent", "grade"]),
+        "url": final_url,
+        "content": content,
+        "content_type": content_type,
+        "last_modified_header": last_modified,
     }
 
 
-def build_chat_context(mfg, scores, state, question=""):
-    """
-    Small, intent-aware context for Groq's 6k TPM limit.
-    Instead of always sending every hasLaw annotation, only send the sections
-    needed for the user's question.
-    """
-    name    = mfg["name"]
-    covered = scores["covered"]
-    missing = scores["missing"]
-    lc      = scores["law_coverage"]
-    overall = scores["overall"]
-    w       = scores["weighted"]
-    scope   = state if state != "all" else "all regulations"
-    intent  = _question_intent(question)
-    wanted_laws = _wanted_laws_from_question(question, state)
-    explicit_laws_for_context = _explicit_laws_from_question(question)
-    wanted_law_ids = {law["id"] for law in wanted_laws}
-    wanted_law_labels = {law["label"] for law in wanted_laws}
-
-    # Default to the most useful context when the question is vague.
-    if not any(intent.values()):
-        intent["score"] = True
-        intent["missing"] = True
-
-    out = [f"Manufacturer: {name} | Active compliance scope: {scope}"]
-
-    if intent["score"] or intent["missing"]:
-        out.append("\nCompliance scores for the selected manufacturer:")
-        display_lc = [lw for lw in lc if not explicit_laws_for_context or lw.get("id") in wanted_law_ids or lw.get("label") in wanted_law_labels]
-        for lw in display_lc:
-            out.append(f"  {lw['label']}: {lw['coverage_percent']}% ({lw['num_above']}/{lw['num_classes']} requirements covered)")
-        if not explicit_laws_for_context:
-            out.append(f"  Overall flat coverage: {overall}%")
-            if w:
-                out.append(f"  Overall weighted: {w.get('overall_weighted_score','?')}% | Grade: {w.get('overall_grade','?')}")
-
-    # Law rules from KG: compact by default; annotations only for the requested law(s).
-    if intent["rules"]:
-        rules = law_rules_from_kg(wanted_laws)
-        out.append("\nRules found in the knowledge graph for the requested legislation:")
-        for law in wanted_laws:
-            law_data = rules.get(law["id"], {"rules": []})
-            out.append(f"  {law['label']} includes these requirements:")
-            for r in law_data["rules"][:25]:
-                ann = _trim(r.get("annotation", ""), 150)
-                out.append(f"    - Requirement name: {r['class_label']} | Legal text note: {ann}")
-
-    # Clean law comparison: only class names, no long annotations.
-    if intent["comparison"]:
-        compare_laws = wanted_laws if len(wanted_laws) >= 2 else LAWS
-        kg_compare = law_comparison_from_kg(compare_laws)
-        out.append("\nLegislation comparison based on rules in the knowledge graph:")
-        out.append("  Requirements shared by the requested laws: " + (", ".join(kg_compare["common_rules"][:40]) if kg_compare["common_rules"] else "None found"))
-        for law in compare_laws:
-            rules = kg_compare["rules_by_law"].get(law["id"], {}).get("rules", [])
-            unique = kg_compare["unique_rules"].get(law["id"], [])
-            out.append(f"  {law['label']} includes: " + (", ".join([r["class_label"] for r in rules[:25]]) if rules else "None found"))
-            out.append(f"  Requirements mainly found in {law['label']}: " + (", ".join(unique[:20]) if unique else "None found"))
-
-    # Missing details: for a specific law, include EVERY missing item for that law.
-    # For broad/all-regulation questions, keep a top-N fallback to avoid Groq TPM errors.
-    if intent["missing"]:
-        explicit_laws = explicit_laws_for_context
-        law_labels_filter = {law["label"] for law in explicit_laws}
-
-        if law_labels_filter:
-            missing_for_context = [m for m in missing if m.get("law_label") in law_labels_filter]
-            header_scope = ", ".join(sorted(law_labels_filter))
-            out.append(f"\nMissing requirements for the selected manufacturer policy — all items for {header_scope} ({len(missing_for_context)}):")
-        elif state and state != "all":
-            # compute_scores() is already scoped by state, so this is safe to show in full.
-            missing_for_context = missing
-            out.append(f"\nMissing requirements for the selected manufacturer policy — all items for the active filter ({len(missing_for_context)}):")
-        else:
-            missing_for_context = missing[:10]
-            out.append(f"\nMissing requirements for the selected manufacturer policy — top {min(len(missing), 10)} of {len(missing)}:")
-
-        for m in missing_for_context:
-            out.append(f"  ✗ Requirement name: {m['class_label']} | Law: {m['law_label']}")
-            if m.get("desc"):
-                out.append(f"    Plain meaning / requirement: {_trim(m['desc'], 180)}")
-            if m.get("annotation"):
-                out.append(f"    Legal text note from KG: {_trim(m['annotation'], 260)}")
-        if not missing_for_context:
-            out.append("  None — all requirements appear addressed for this law/filter.")
-
-    # Include a tiny covered sample only if useful and there is room.
-    if (intent["missing"] or intent["score"]) and covered:
-        covered_for_context = []
-        for c in covered:
-            law_labels = [label for label in c.get("law_labels", []) if not explicit_laws_for_context or label in wanted_law_labels]
-            if law_labels:
-                item = dict(c)
-                item["law_labels"] = law_labels
-                covered_for_context.append(item)
-        if covered_for_context:
-            out.append(f"\nCovered examples — top {min(len(covered_for_context), 6)}:")
-            for c in covered_for_context[:6]:
-                out.append(f"  ✓ Requirement name: {c['class_label']} | Law: {', '.join(c['law_labels'])}")
-
-    return "\n".join(out)
+def extract_text_from_html(raw: bytes | str) -> str:
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8", errors="ignore")
+    parser = _VisibleTextParser()
+    parser.feed(raw)
+    return clean_policy_text(parser.get_text())
 
 
-# =============================================================================
-# LLM
-# =============================================================================
-SYSTEM_PROMPT = (
-    "You are a concise IoT privacy compliance assistant. "
-    "Answer only from the structured DATA provided from the knowledge graph. Never invent law sections, rules, or facts.\n\n"
-    "Rules:\n"
-    "• Do not print internal headings such as KG LAW COMPARISON, KG LEGISLATION RULES, DATA, or COMPLIANCE SCORES.\n"
-    "• Do not use phrases like gap score, section/reference, BERT, KG annotation, class IRI, or technical ontology terms in the final answer.\n"
-    "• When explaining legislation rules, translate each requirement name into natural language for a non-technical reader. Explain what the law is asking a company to do, not just the class name.\n"
-    "• When comparing two laws, answer naturally: first say what both laws share, then say what each law uniquely emphasizes. Do not use a rigid template or internal labels.\n"
-    "• For missing privacy-policy coverage, list every missing item provided in DATA. For each item, use about two plain-English sentences: what the law expects, and what the selected policy does not clearly say.\n"
-    "• Only reference the specific law or laws provided in the DATA. If only NISTIR 8259 is provided, do not mention Public Law 116-207 or any other federal law.\n"
-    "• Scores → one sentence, prefer weighted score when available. Nothing missing → one sentence, stop.\n"
-    "• Keep answers focused; usually under 300 words unless the user asks for all rules."
+def extract_text_from_pdf_bytes(raw: bytes) -> str:
+    """Optional PDF support. Uses PyPDF2 when available."""
+    try:
+        from io import BytesIO
+        from PyPDF2 import PdfReader
+    except Exception as exc:  # pragma: no cover
+        raise RuntimeError("PDF extraction requires PyPDF2") from exc
+
+    reader = PdfReader(BytesIO(raw))
+    return clean_policy_text("\n\n".join(page.extract_text() or "" for page in reader.pages))
+
+
+def extract_policy_text(fetched: dict[str, Any]) -> str:
+    content_type = (fetched.get("content_type") or "").lower()
+    content = fetched.get("content") or b""
+    if "pdf" in content_type or str(fetched.get("url", "")).lower().endswith(".pdf"):
+        return extract_text_from_pdf_bytes(content)
+    return extract_text_from_html(content)
+
+
+def clean_policy_text(text: str) -> str:
+    text = html.unescape(text or "")
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Date parsing helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+_MONTHS = (
+    "January|February|March|April|May|June|July|August|September|October|November|December|"
+    "Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec"
 )
-def _call_llm(question, context):
+
+_DATE_PATTERNS = [
+    # Last Updated: August 12, 2025
+    rf"(?P<label>last\s+(?:updated|modified|revised)|effective\s+(?:date|as\s+of)|updated\s+on|revised\s+on|date\s+of\s+last\s+revision)\s*[:\-–—]?\s*(?P<date>(?:{_MONTHS})\.?\s+\d{{1,2}},?\s+\d{{4}})",
+    # Effective Date: 2025-08-12
+    r"(?P<label>last\s+(?:updated|modified|revised)|effective\s+(?:date|as\s+of)|updated\s+on|revised\s+on|date\s+of\s+last\s+revision)\s*[:\-–—]?\s*(?P<date>\d{4}[-/]\d{1,2}[-/]\d{1,2})",
+    # Effective Date: 08/12/2025
+    r"(?P<label>last\s+(?:updated|modified|revised)|effective\s+(?:date|as\s+of)|updated\s+on|revised\s+on|date\s+of\s+last\s+revision)\s*[:\-–—]?\s*(?P<date>\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})",
+    # This Privacy Policy was last updated on August 12, 2025
+    rf"(?P<label>privacy\s+policy\s+was\s+last\s+(?:updated|modified|revised)\s+on)\s*(?P<date>(?:{_MONTHS})\.?\s+\d{{1,2}},?\s+\d{{4}})",
+]
+
+
+def _as_utc(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def parse_date_guess(value: str | None) -> Optional[datetime]:
+    """Parse common policy date formats without adding a heavy dependency."""
+    if not value:
+        return None
+    s = str(value).strip()
+    s = re.sub(r"^(as of|on)\s+", "", s, flags=re.I).strip()
+    s = s.replace("Sept.", "Sep").replace("Sept ", "Sep ")
+
+    # ISO / numeric patterns
+    numeric_formats = [
+        "%Y-%m-%d", "%Y/%m/%d", "%m/%d/%Y", "%m-%d-%Y", "%m.%d.%Y",
+        "%m/%d/%y", "%m-%d-%y", "%m.%d.%y",
+    ]
+    for fmt in numeric_formats:
+        try:
+            return _as_utc(datetime.strptime(s, fmt))
+        except ValueError:
+            pass
+
+    # Month-name patterns
+    month_formats = ["%B %d, %Y", "%B %d %Y", "%b %d, %Y", "%b %d %Y", "%B %Y", "%b %Y"]
+    for fmt in month_formats:
+        try:
+            return _as_utc(datetime.strptime(s, fmt))
+        except ValueError:
+            pass
+
+    # RFC/HTTP date header
     try:
-        resp = groq_client.chat.completions.create(
-            model="openai/gpt-oss-20b",
-            messages=[{"role": "system", "content": SYSTEM_PROMPT},
-                      {"role": "user",   "content": f"DATA:\n{context}\n\nQUESTION:\n{question}"}],
-            temperature=0.1, max_tokens=700)
-        return resp.choices[0].message.content.strip()
-    except Exception as e:
-        return f"Error: {e}"
-
-@lru_cache(maxsize=256)
-def _cached_llm(question, ctx_hash, context):
-    return _call_llm(question, context)
-
-def ask_llm(question, context):
-    h = hashlib.md5(context.encode()).hexdigest()
-    return _cached_llm(question, h, context)
+        return _as_utc(parsedate_to_datetime(s))
+    except Exception:
+        return None
 
 
-# =============================================================================
-# HELPERS
-# =============================================================================
-def _gen_iri(name):
-    base = str(MFG_CLS).split("#")[0] + "#"
-    slug = re.sub(r"\W+", "_", name.strip()) or "Manufacturer"
-    cand = URIRef(base + slug)
-    i = 1
-    while (cand, None, None) in g:
-        cand = URIRef(base + f"{slug}_{i}"); i += 1
-    return cand
-
-def _find_mfg(name):
-    t = name.lower().strip()
-    return next((m for m in manufacturers if m["name"].lower().strip() == t), None)
+def format_date(dt: Optional[datetime]) -> Optional[str]:
+    if not dt:
+        return None
+    return _as_utc(dt).date().isoformat()
 
 
-# =============================================================================
-# ROUTES
-# =============================================================================
-@app.get("/")
-def index():
-    return render_template("index.html")
+#agent2 data extracter
 
-@app.get("/list")
-def list_mfg():
-    return jsonify([{"iri": m["iri"], "name": m["name"]} for m in manufacturers])
+def extract_policy_date_regex(policy_text: str, last_modified_header: str | None = None) -> DateCandidate:
+    """Use deterministic patterns first. Returns confidence none/low/high."""
+    text = clean_policy_text(policy_text)
+    candidates: list[DateCandidate] = []
+
+    search_area = text[:8000]  # most policies put update date near the top
+    for pattern in _DATE_PATTERNS:
+        for m in re.finditer(pattern, search_area, flags=re.I):
+            raw_date = m.group("date").strip(" .")
+            parsed = parse_date_guess(raw_date)
+            if parsed:
+                label = re.sub(r"\s+", " ", m.group("label").strip())
+                evidence = m.group(0).strip()
+                candidates.append(DateCandidate(raw_date, parsed, label, "high", "regex", evidence))
+
+    if len(candidates) == 1:
+        return candidates[0]
+
+    if len(candidates) > 1:
+        # Pick newest but mark low confidence so LLM can validate if enabled.
+        newest = max(candidates, key=lambda c: c.parsed or datetime.min.replace(tzinfo=timezone.utc))
+        newest.confidence = "low"
+        newest.evidence = "Multiple policy date candidates found; newest candidate: " + newest.evidence
+        return newest
+
+    header_date = parse_date_guess(last_modified_header)
+    if header_date:
+        return DateCandidate(last_modified_header or "", header_date, "HTTP Last-Modified", "low", "regex", last_modified_header or "")
+
+    return DateCandidate("", None, "", "none", "regex", "")
 
 
-@app.get("/detail")
-def detail():
-    """Returns flat + weighted scores, covered, missing classes — one payload."""
-    iri   = request.args.get("iri")
-    state = norm_state(request.args.get("state", "all"))
-    if not iri:
-        return jsonify({"error": "missing iri"}), 400
+def _json_from_llm(raw: str) -> dict[str, Any]:
+    raw = (raw or "").strip()
+    raw = raw.replace("```json", "").replace("```", "").strip()
+    match = re.search(r"\{.*\}", raw, flags=re.S)
+    if match:
+        raw = match.group(0)
+    return json.loads(raw)
 
-    mfg = next((m for m in manufacturers if m["iri"] == iri), None)
-    if not mfg:
-        inst = URIRef(iri)
-        lbls = [str(o) for o in g.objects(inst, RDFS.label)]
-        pols = [str(o) for o in g.objects(inst, POLICY_PROP) if isinstance(o, Literal)]
-        mfg  = {"iri": iri,
-                "name":   clean_name(lbls[0] if lbls else local_name(iri)),
-                "policy": max(pols, key=len) if pols else ""}
 
-    scores = compute_scores(mfg["policy"], state)
-    assessment_score = update_assessment_score(mfg["iri"], mfg["policy"])
-    g.serialize(destination=str(ONTO_PATH), format="xml")
-    return jsonify({
-        "iri":          mfg["iri"],
-        "name":         mfg["name"],
-        "policy":       mfg["policy"],
-        "state":        state,
-        "overall":      scores["overall"],
-        "AssessmentScore": assessment_score,
-        "law_coverage": scores["law_coverage"],
-        "covered":      scores["covered"],
-        "missing":      scores["missing"],
-        "weighted":     scores["weighted"],
-    })
+def llm_extract_policy_date(
+    policy_text: str,
+    llm_client: Any = None,
+    llm_model: str = "openai/gpt-oss-20b",
+    llm_callable: Optional[Callable[[str, str], str]] = None,
+) -> DateCandidate:
+    """LLM fallback for unclear policy dates. It extracts only; it does not update the KG."""
+    clipped = clean_policy_text(policy_text)[:12000]
+    system = (
+        "You extract the effective date or last-updated date from privacy policies. "
+        "Return JSON only. Do not invent dates. If no reliable policy update date is present, return null."
+    )
+    user = f"""
+Find the date that belongs to the privacy policy itself, such as Last Updated, Effective Date, Last Modified, or Revised.
+Ignore copyright years, footer years, blog dates, cookie banner dates, and unrelated dates.
 
-@app.get("/download_ontology")
-def download_ontology():
-    """
-    Download the current ontology stored on disk.
-    """
-    try:
-        if not ONTO_PATH.exists():
-            return jsonify({
-                "error": f"Ontology file not found: {ONTO_PATH}"
-            }), 404
+Return exactly this JSON shape:
+{{
+  "date_found": "YYYY-MM-DD or null",
+  "date_label": "Last Updated / Effective Date / null",
+  "confidence": "high / medium / low / none",
+  "evidence": "short quote from the policy, or empty string"
+}}
 
-        return send_file(
-            str(ONTO_PATH),
-            as_attachment=True,
-            download_name=ONTO_PATH.name,
-            mimetype="application/rdf+xml"
+PRIVACY POLICY TEXT:
+{clipped}
+""".strip()
+
+    if llm_callable is not None:
+        raw = llm_callable(system, user)
+    elif llm_client is not None:
+        resp = llm_client.chat.completions.create(
+            model=llm_model,
+            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+            temperature=0.0,
+            max_tokens=220,
+            response_format={"type": "json_object"},
         )
+        raw = resp.choices[0].message.content.strip()
+    else:
+        return DateCandidate("", None, "", "none", "llm", "No LLM client configured")
 
-    except Exception as e:
-        return jsonify({
-            "error": str(e),
-            "ontology_path": str(ONTO_PATH)
-        }), 500
+    try:
+        data = _json_from_llm(raw)
+    except Exception:
+        return DateCandidate("", None, "", "none", "llm", "LLM returned invalid JSON")
 
-@app.post("/classify_existing")
-def classify_existing():
+    date_found = data.get("date_found")
+    parsed = parse_date_guess(date_found)
+    if not parsed:
+        return DateCandidate("", None, str(data.get("date_label") or ""), "none", "llm", str(data.get("evidence") or ""))
+
+    confidence = str(data.get("confidence") or "low").lower()
+    if confidence not in {"high", "medium", "low", "none"}:
+        confidence = "low"
+    return DateCandidate(str(date_found), parsed, str(data.get("date_label") or "LLM extracted date"), confidence, "llm", str(data.get("evidence") or ""))
+
+
+def extract_policy_date_agent(
+    policy_text: str,
+    last_modified_header: str | None = None,
+    llm_client: Any = None,
+    llm_model: str = "openai/gpt-oss-20b",
+    llm_callable: Optional[Callable[[str, str], str]] = None,
+    force_llm: bool = False,
+) -> tuple[DateCandidate, bool]:
+    """Regex first; LLM only when regex is unclear or forced."""
+    regex_candidate = extract_policy_date_regex(policy_text, last_modified_header)
+    if regex_candidate.confidence == "high" and not force_llm:
+        return regex_candidate, False
+
+    llm_candidate = llm_extract_policy_date(policy_text, llm_client, llm_model, llm_callable)
+    if llm_candidate.parsed and llm_candidate.confidence in {"high", "medium"}:
+        return llm_candidate, True
+
+    return regex_candidate, bool(force_llm or regex_candidate.confidence in {"none", "low"})
+
+
+#agent3 judge
+
+def get_stored_company_date(g: Graph, manufacturer_iri: URIRef) -> DateCandidate:
+    """Prefer dcterms:modified; fall back to dcterms:created."""
+    for pred, label in [(DCTERMS_MODIFIED, "KG modified"), (DCTERMS_CREATED, "KG created")]:
+        vals = list(g.objects(manufacturer_iri, pred))
+        if vals:
+            raw = str(vals[0])
+            parsed = parse_date_guess(raw[:10]) or parse_date_guess(raw)
+            return DateCandidate(raw, parsed, label, "high" if parsed else "none", "stored", raw)
+    return DateCandidate("", None, "", "none", "stored", "")
+
+
+def compare_policy_dates(stored: DateCandidate, live: DateCandidate) -> dict[str, Any]:
+    if live.parsed is None:
+        return {"status": "date_unknown", "should_update": False, "reason": "No reliable live policy date found."}
+    if stored.parsed is None:
+        return {"status": "outdated", "should_update": True, "reason": "No stored KG date found; live policy date is available."}
+    if _as_utc(live.parsed).date() > _as_utc(stored.parsed).date():
+        return {"status": "outdated", "should_update": True, "reason": "Live policy date is newer than stored KG date."}
+    return {"status": "current", "should_update": False, "reason": "Stored KG policy date is current or newer."}
+
+
+#agent4 policy updater than passes to the timestamp funct
+
+def _report(
+    *, company_name: str, policy_url: str, stored: DateCandidate, live: DateCandidate,
+    status: str, action_taken: str, llm_used: bool, reason: str,
+    previous_policy_saved: bool = False, update_info: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    return {
+        "target_type": "company_policy",
+        "company": company_name,
+        "policy_url": policy_url,
+        "stored_date": format_date(stored.parsed),
+        "stored_date_raw": stored.raw or None,
+        "live_date": format_date(live.parsed),
+        "live_date_raw": live.raw or None,
+        "date_label": live.label or None,
+        "date_source": live.source,
+        "date_confidence": live.confidence,
+        "date_evidence": live.evidence or None,
+        "llm_used": llm_used,
+        "status": status,
+        "reason": reason,
+        "action_taken": action_taken,
+        "previous_policy_saved": previous_policy_saved,
+        "update_info": update_info or {},
+        "checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+
+
+def check_and_update_company_policy(
+    *,
+    g: Graph,
+    manufacturer_iri: URIRef,
+    policy_prop: URIRef,
+    policy_url: str,
+    company_name: str,
+    timestamp_module: Any,
+    ontology_path: Optional[str] = None,
+    llm_client: Any = None,
+    llm_model: str = "openai/gpt-oss-20b",
+    llm_callable: Optional[Callable[[str, str], str]] = None,
+    force_llm: bool = False,
+) -> dict[str, Any]:
     """
-    Called when the user hits Classify on an already-known manufacturer.
+    Main policy-only agentic update pipeline.
 
-    Flow:
-      1. Run the agentic writer (ALTERNATIVEpt2) — it searches the web for
-         the company's current official privacy policy, compares dates against
-         what is stored in the KG, and updates the KG in-memory + on disk if
-         the live policy is newer.
-      2. If the KG was updated, sync the in-memory manufacturers list so the
-         scoring step immediately uses the fresh text.
-      3. Run compute_scores() on whatever policy is now current and return the
-         full detail payload (same shape as /detail) plus a crawler_report
-         field so the frontend can tell the user what happened.
+    This updates the KG only when the live policy date is clearly newer.
+    The old policy is preserved through timestamp_module.upsert_policy().
     """
-    data  = request.get_json(force=True) or {}
-    iri   = (data.get("iri") or "").strip()
-    state = norm_state(data.get("state", "all"))
+    fetched = fetch_policy_source(policy_url)
+    live_policy_text = extract_policy_text(fetched)
+    if not live_policy_text:
+        raise ValueError("Could not extract readable policy text from the source URL.")
 
-    if not iri:
-        return jsonify({"error": "missing iri"}), 400
-
-    mfg = next((m for m in manufacturers if m["iri"] == iri), None)
-    if not mfg:
-        return jsonify({"error": "Manufacturer not found."}), 404
-
-    # ── Step 1: run the agentic policy checker / updater ──────────────────
-    crawler_report = {}
-    try:
-        result = agentic_writer.run_agentic_discovery_and_update(
-            g=g,
-            company_name=mfg["name"],
-            manufacturer_iri=URIRef(iri),
-            policy_prop=POLICY_PROP,
-            groq_client=groq_client,
-            onto_path=str(ONTO_PATH),
-        )
-        retain_one_previous_policy(iri)
-        crawler_report = {
-            "wrote_update":     result.get("wrote_update", False),
-            "finish_summary":   result.get("finish_summary", ""),
-            "tool_calls_made":  result.get("tool_calls_made", 0),
-            "write_result":     result.get("write_result"),
-        }
-        print(
-            f"[policy-discovery] classify_existing company={mfg['name']} "
-            f"wrote_update={crawler_report['wrote_update']} "
-            f"tool_calls={crawler_report['tool_calls_made']} "
-            f"summary={crawler_report['finish_summary']}",
-            flush=True,
-        )
-
-        # ── Step 2: sync in-memory list if KG was updated ─────────────────
-        if result.get("wrote_update"):
-            pols = [str(o) for o in g.objects(URIRef(iri), POLICY_PROP)
-                    if isinstance(o, Literal)]
-            if pols:
-                mfg["policy"] = max(pols, key=len)
-
-    except Exception as e:
-        # Crawler failure is non-fatal — fall through and score what we have.
-        print(
-            f"[policy-discovery] classify_existing company={mfg['name']} ERROR "
-            f"{type(e).__name__}: {e}",
-            flush=True,
-        )
-        crawler_report = {"error": str(e), "wrote_update": False}
-
-    # ── Step 3: score the (possibly refreshed) policy ────────────────────
-    scores = compute_scores(mfg["policy"], state)
-    assessment_score = update_assessment_score(mfg["iri"], mfg["policy"])
-    g.serialize(destination=str(ONTO_PATH), format="xml")
-
-    return jsonify({
-        "iri":           mfg["iri"],
-        "name":          mfg["name"],
-        "policy":        mfg["policy"],
-        "state":         state,
-        "overall":       scores["overall"],
-        "AssessmentScore": assessment_score,
-        "law_scores": {
-            item["id"]: item["coverage_percent"]
-            for item in scores["law_coverage"]
-            if item["id"] in LAW_ASSESSMENT_SCORE_PROPS
-        },
-        "law_coverage":  scores["law_coverage"],
-        "covered":       scores["covered"],
-        "missing":       scores["missing"],
-        "weighted":      scores["weighted"],
-        "crawler_report": crawler_report,
-    }), 200
+    live_date, llm_used = extract_policy_date_agent(
+        live_policy_text,
+        last_modified_header=fetched.get("last_modified_header"),
+        llm_client=llm_client,
+        llm_model=llm_model,
+        llm_callable=llm_callable,
+        force_llm=force_llm,
+    )
+    stored_date = get_stored_company_date(g, manufacturer_iri)
+    decision = compare_policy_dates(stored_date, live_date)
+    checked_at = timestamp_module.mark_checked(g, manufacturer_iri)
 
 
-@app.post("/chat")
-def chat():
-    """Uses compute_scores() — same as /detail — so numbers always match."""
-    data     = request.get_json(force=True) or {}
-    question = (data.get("question") or "").strip()
-    iri      = (data.get("iri") or "").strip()
-    state    = norm_state(data.get("state", "all"))
-
-    if not question or not iri:
-        return jsonify({"answer": "Please select a manufacturer and ask a question."}), 400
-    mfg = next((m for m in manufacturers if m["iri"] == iri), None)
-    if not mfg:
-        return jsonify({"answer": "Manufacturer not found."}), 404
-
-    scores  = compute_scores(mfg["policy"], state)
-    context = build_chat_context(mfg, scores, state, question)
-    answer  = ask_llm(question, context)
-    return jsonify({"answer": answer}), 200
-
-
-@app.post("/add_manufacturer")
-def add_manufacturer():
-    data      = request.get_json(force=True) or {}
-    name      = (data.get("name") or "").strip()
-    policy    = (data.get("policy") or "").strip()
-    sel_states = data.get("selected_states") or []
-    if not name or not policy:
-        return jsonify({"error": "name and policy required"}), 400
-
-    existing = _find_mfg(name)
-    inst_iri = URIRef(existing["iri"]) if existing else _gen_iri(name)
-    if not existing:
-        g.add((inst_iri, RDF.type, MFG_CLS))
-        g.add((inst_iri, RDFS.label, Literal(name)))
-        g.add((inst_iri, USER_ADDED_PROP, Literal(True)))
-
-    ts_info = ts.upsert_policy(g, inst_iri, POLICY_PROP, policy)
-    retain_one_previous_policy(inst_iri)
-    auto    = state_detector.detect_states_from_text(policy)
-    states  = sel_states or [s["id"] for s in auto["detected"]]
-
-    for old in list(g.objects(inst_iri, APPLIES_TO_STATE_PROP)):
-        g.remove((inst_iri, APPLIES_TO_STATE_PROP, old))
-    for sid in states:
-        g.add((inst_iri, APPLIES_TO_STATE_PROP, Literal(sid)))
-
-    assessment_score = update_assessment_score(str(inst_iri), policy)
-
-    entry = {"iri": str(inst_iri), "name": clean_name(name),
-             "policy": policy, "user_added": True}
-    if existing:
-        manufacturers[:] = [m for m in manufacturers if m["iri"] != str(inst_iri)]
-    manufacturers.append(entry)
-    manufacturers.sort(key=lambda m: m["name"].lower())
-
-    try:
-        g.serialize(destination=str(ONTO_PATH), format="xml")
-    except Exception as e:
-        return jsonify({"error": f"Memory OK, file write failed: {e}"}), 500
-
-    return jsonify({"iri": entry["iri"], "name": entry["name"],
-                    "action": ts_info["action"],
-                    "created_at": ts_info["created_at"],
-                    "modified_at": ts_info["modified_at"],
-                    "auto_detected_states": auto, "selected_states": states,
-                    "applicable_laws": state_detector.applicable_laws(states, LAWS),
-                    "AssessmentScore": assessment_score,
-                    }), 200 if existing else 201
-
-
-@app.post("/extract_pdf")
-def extract_pdf():
-    if "file" not in request.files:
-        return jsonify({"error": "No file"}), 400
-    f = request.files["file"]
-    if not f or not allowed_file(f.filename):
-        return jsonify({"error": "PDF only"}), 400
-    path = os.path.join(app.config["UPLOAD_FOLDER"], secure_filename(f.filename))
-    f.save(path)
-    try:
-        text = "\n\n".join(p.extract_text() or "" for p in PdfReader(path).pages).strip()
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-    finally:
-        try: os.remove(path)
-        except: pass
-    return jsonify({"text": text}), 200
-
-
-@app.post("/upload_regulation")
-def upload_regulation():
-    f         = request.files.get("file")
-    law_id    = (request.form.get("law_id") or "").strip()
-    law_label = (request.form.get("law_label") or "").strip()
-    if not f or not allowed_file(f.filename) or not law_id or not law_label:
-        return jsonify({"error": "PDF, law_id, law_label required"}), 400
-    path = os.path.join(app.config["UPLOAD_FOLDER"], secure_filename(f.filename))
-    f.save(path)
-    try:
-        text  = reg_add.read_pdf_text(path)
-        sm    = SentenceTransformer(EMBED_MODEL)
-        matched, new_cands = reg_add.extract_candidate_classes(text, sm)
-        base  = str(MFG_CLS).split("#")[0] + "#"
-        annotated, created = [], []
-        for m in matched:
-            ex = reg_add.find_existing_class(g, m["label"])
-            if ex:
-                reg_add.annotate_existing_class(g, ex, law_label, m["example_sentences"])
-                annotated.append(m["label"])
-        for n in new_cands:
-            if not reg_add.find_existing_class(g, n["label"]):
-                reg_add.create_new_class(g, base, n["label"], law_label, n["example_sentences"])
-                created.append(n["label"])
-        reg_add.register_law_in_config("config.json", law_id, law_label,
-                                       [law_label, law_id.replace("_", " ")])
-        # Store the new regulatory-document class counts on every manufacturer.
-        refresh_all_manufacturer_statute_counts(persist=False)
-        g.serialize(destination=str(ONTO_PATH), format="xml")
-        return jsonify({"annotated": annotated, "created": created,
-                        "statute_class_counts": regulatory_statute_counts()})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-    finally:
-        try: os.remove(path)
-        except: pass
-
-
-@app.post("/update_regulation")
-def update_regulation():
-    data = request.get_json(force=True) or {}
-    for k in ["law_id", "law_label", "new_version", "updated_classes"]:
-        if k not in data:
-            return jsonify({"error": f"Missing {k}"}), 400
-    base   = str(MFG_CLS).split("#")[0] + "#"
-    result = reg_update.update_regulation(g, base, **{k: data[k] for k in
-                ["law_label","law_id","new_version","updated_classes"]})
-    try:
-        refresh_all_manufacturer_statute_counts(persist=False)
-        g.serialize(destination=str(ONTO_PATH), format="xml")
-    except Exception as e:
-        return jsonify({"error": str(e), **result}), 500
-    result["statute_class_counts"] = regulatory_statute_counts()
-    return jsonify(result)
-
-
-@app.get("/manufacturer_history")
-def manufacturer_history():
-    iri = request.args.get("iri")
-    if not iri:
-        return jsonify({"error": "missing iri"}), 400
-    return jsonify(ts.get_policy_history(g, URIRef(iri), POLICY_PROP))
-
-
-
-
-@app.post("/check_company_policy_update")
-def check_company_policy_update():
-    """
-    Agentic policy-only crawler.
-    Checks a live company privacy policy URL before scoring.
-    If the live policy date is newer than the KG policy date, the KG
-    policy_description is updated through step4a_timestamps.upsert_policy().
-    No legislation/regulation update logic runs here.
-    """
-    data = request.get_json(force=True) or {}
-    iri = (data.get("iri") or "").strip()
-    policy_url = (data.get("policy_url") or "").strip()
-    force_llm = bool(data.get("force_llm", False))
-
-    if not iri or not policy_url:
-        return jsonify({"error": "iri and policy_url are required"}), 400
-
-    mfg = next((m for m in manufacturers if m["iri"] == iri), None)
-    if not mfg:
-        return jsonify({"error": "Manufacturer not found."}), 404
-
-    try:
-        report = policy_crawler.check_and_update_company_policy(
-            g=g,
-            manufacturer_iri=URIRef(iri),
-            policy_prop=POLICY_PROP,
+    if not decision["should_update"]:
+        action = "No KG update was made."
+        if decision["status"] == "current":
+            action = "No KG update needed; stored policy is current."
+        return _report(
+            company_name=company_name,
             policy_url=policy_url,
-            company_name=mfg["name"],
-            timestamp_module=ts,
-            ontology_path=str(ONTO_PATH),
-            llm_client=groq_client,
-            force_llm=force_llm,
+            stored=stored_date,
+            live=live_date,
+            status=decision["status"],
+            action_taken=action,
+            llm_used=llm_used,
+            reason=decision["reason"],
         )
 
-        # If the KG was refreshed, keep the in-memory manufacturer list in sync
-        # so /detail and /chat score the updated policy immediately.
-        if report.get("status") == "updated":
-            retain_one_previous_policy(iri)
-            pols = [str(o) for o in g.objects(URIRef(iri), POLICY_PROP) if isinstance(o, Literal)]
-            if pols:
-                mfg["policy"] = max(pols, key=len)
+    update_info = timestamp_module.upsert_policy(g, manufacturer_iri, policy_prop, live_policy_text)
+    if ontology_path:
+        g.serialize(destination=str(ontology_path), format="xml")
 
-        assessment_score = update_assessment_score(iri, mfg["policy"])
-        g.serialize(destination=str(ONTO_PATH), format="xml")
-        report["AssessmentScore"] = assessment_score
-        report["statute_class_counts"] = regulatory_statute_counts()
-        return jsonify(report), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.post("/detect_states")
-def detect_states():
-    data   = request.get_json(force=True) or {}
-    policy = (data.get("policy") or "").strip()
-    if not policy:
-        return jsonify({"error": "policy required"}), 400
-    auto = state_detector.detect_states_from_text(policy)
-    return jsonify({"auto_detection": auto,
-                    "applicable_laws": state_detector.applicable_laws(
-                        [s["id"] for s in auto["detected"]], LAWS)})
+    return _report(
+        company_name=company_name,
+        policy_url=policy_url,
+        stored=stored_date,
+        live=live_date,
+        status="updated",
+        action_taken="Knowledge graph policy_description updated before scoring.",
+        llm_used=llm_used,
+        reason=decision["reason"],
+        previous_policy_saved=bool(update_info.get("previous_policy")),
+        update_info=update_info,
+    )
 
 
-@app.get("/weighted_grade_trigger")
-def weighted_grade_trigger():
-    """
-    Pre-warms the weighted score cache for a manufacturer.
-    Call once after selecting a manufacturer; /detail will use the cache.
-    GET /weighted_grade_trigger?iri=<iri>&state=all
-    """
-    iri   = request.args.get("iri")
-    state = norm_state(request.args.get("state", "all"))
-    if not iri:
-        return jsonify({"error": "missing iri"}), 400
-    mfg = next((m for m in manufacturers if m["iri"] == iri), None)
-    if not mfg:
-        return jsonify({"error": "not found"}), 404
-    try:
-        result = wgrader.run_weighted_grading(mfg, state, use_cache=False)
-        return jsonify(result)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+# =============================================================================
+# Agent 1 — Dynamic manufacturer-name source discovery
+# =============================================================================
 
-#1
-@app.post("/auto_add_manufacturer")
-def auto_add_manufacturer():
-    """
-    Name-only manufacturer add flow.
+def _company_slug(company_name: str) -> str:
+    """Normalize a user-entered manufacturer name into a domain-like slug."""
+    name = (company_name or "").lower().strip()
+    # Remove common legal suffixes that do not usually appear in domains.
+    name = re.sub(r"\b(inc|inc\.|llc|ltd|corp|corporation|company|co|co\.)\b", "", name)
+    return re.sub(r"[^a-z0-9]+", "", name)
 
-    User enters only a manufacturer name.
-    The crawler searches for the official privacy policy online,
-    extracts the policy text, saves the manufacturer into the KG,
-    and then the frontend can classify it.
-    """
-    data = request.get_json(force=True) or {}
-    name = (data.get("name") or "").strip()
 
-    if not name:
-        return jsonify({"error": "manufacturer name required"}), 400
 
-    try:
-        crawler_report = policy_crawler.fetch_live_policy_for_company_name(
-            company_name=name,
-            llm_client=groq_client,
+# ---------------------------------------------------------------------------
+# REAL WEB SEARCH DISCOVERY (replaces the old guess-only implementation)
+# ---------------------------------------------------------------------------
+# The old implementation tried to guess URLs like:
+#   https://www.company.com/privacy-policy
+# That fails for companies such as Control4 whose policy may live on
+# my.control4.com/PrivacyPolicy.aspx or another official subdomain.
+#
+# This implementation performs a real web search for the manufacturer name,
+# collects candidate policy URLs, fetches those pages, validates the content,
+# and then lets the LLM select the most official privacy-policy source.
+
+BLOCKED_RESULT_DOMAINS = (
+    "duckduckgo.com", "bing.com", "google.com", "yahoo.com", "wikipedia.org",
+    "youtube.com", "youtu.be", "facebook.com", "instagram.com", "x.com",
+    "twitter.com", "linkedin.com", "reddit.com", "pinterest.com", "github.com",
+)
+
+BAD_URL_HINTS = (
+    "blog", "news", "press", "article", "forum", "community", "reviews",
+    "login", "signin", "signup", "careers", "jobs", "support/article",
+    "youtube", "facebook", "linkedin", "reddit",
+)
+
+
+def _strip_tags(value: str) -> str:
+    value = re.sub(r"<script.*?</script>", " ", value or "", flags=re.I | re.S)
+    value = re.sub(r"<style.*?</style>", " ", value, flags=re.I | re.S)
+    value = re.sub(r"<[^>]+>", " ", value)
+    return clean_policy_text(html.unescape(value))
+
+
+def _clean_search_url(raw_url: str, base_url: str = "") -> Optional[str]:
+    """Normalize result links from search-engine HTML pages."""
+    if not raw_url:
+        return None
+
+    url = html.unescape(str(raw_url).strip())
+    if url.startswith("//"):
+        url = "https:" + url
+    elif url.startswith("/") and base_url:
+        url = urllib.parse.urljoin(base_url, url)
+
+    # DuckDuckGo redirects often look like /l/?uddg=<encoded-url>
+    parsed = urllib.parse.urlparse(url)
+    qs = urllib.parse.parse_qs(parsed.query)
+    if "uddg" in qs and qs["uddg"]:
+        url = qs["uddg"][0]
+    elif "q" in qs and qs["q"] and parsed.netloc.lower() in {"www.google.com", "google.com"}:
+        url = qs["q"][0]
+
+    url = html.unescape(url).strip()
+    if not url.startswith(("http://", "https://")):
+        return None
+
+    parsed = urllib.parse.urlparse(url)
+    host = (parsed.netloc or "").lower()
+    if not host:
+        return None
+    if any(blocked in host for blocked in BLOCKED_RESULT_DOMAINS):
+        return None
+
+    # Remove fragments and obvious tracking noise.
+    cleaned = urllib.parse.urlunparse((
+        parsed.scheme,
+        parsed.netloc,
+        parsed.path.rstrip("/"),
+        "",
+        parsed.query,
+        "",
+    ))
+    return cleaned
+
+
+def _fetch_search_page(search_url: str, timeout: int = 12) -> str:
+    req = urllib.request.Request(
+        search_url,
+        headers={
+            "User-Agent": DEFAULT_USER_AGENT,
+            "Accept": "text/html,application/xhtml+xml,*/*",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        raw = resp.read()
+    return raw.decode("utf-8", errors="ignore")
+
+
+def _parse_search_results(html_text: str, base_url: str) -> list[dict[str, Any]]:
+    """Dependency-free search result parser for DuckDuckGo/Bing-like HTML."""
+    results: list[dict[str, Any]] = []
+
+    # First parse anchor tags so title text travels with the URL.
+    for m in re.finditer(r"<a\b[^>]*href=[\"']([^\"']+)[\"'][^>]*>(.*?)</a>", html_text, flags=re.I | re.S):
+        url = _clean_search_url(m.group(1), base_url=base_url)
+        if not url:
+            continue
+        title = _strip_tags(m.group(2))[:240]
+        results.append({"url": url, "title": title, "snippet": ""})
+
+    # De-dupe by URL while preserving first useful title.
+    dedup: dict[str, dict[str, Any]] = {}
+    for r in results:
+        if r["url"] not in dedup:
+            dedup[r["url"]] = r
+    return list(dedup.values())
+
+
+def _search_result_score(company_name: str, url: str, title: str = "", snippet: str = "") -> int:
+    """Score search-result metadata before fetching the page."""
+    slug = _company_slug(company_name)
+    company_terms = [t for t in re.split(r"\s+", re.sub(r"[^A-Za-z0-9 ]+", " ", company_name.lower())) if t]
+    low_url = (url or "").lower()
+    low_title = (title or "").lower()
+    low_snip = (snippet or "").lower()
+    host = urllib.parse.urlparse(low_url).netloc.replace("www.", "")
+    joined = f"{low_url} {low_title} {low_snip}"
+
+#score apparatus
+    score = 0
+    if ".us" in low_url:
+        score += 5
+    if "us." in low_url:
+        score += 5
+    if "/us/" in low_url:
+        score += 5
+    if "/pages/privacy-policy" in low_url:
+        score += 3
+    if "privacy" in low_url:
+        score += 5
+    if any(x in low_url for x in (
+            "/eu/",
+            "/uk/",
+            "/en-gb/",
+            "europe",
+            "gdpr",
+        )):
+        score -= 10
+    if "privacy policy" in joined or "privacy notice" in joined or "privacy statement" in joined:
+        score += 5
+    if slug and slug in host.replace(".", ""):
+        score += 4
+    elif slug and slug in low_url.replace(".", ""):
+        score += 2
+    if company_terms and any(term in joined for term in company_terms):
+        score += 2
+    if "official" in joined:
+        score += 1
+    if low_url.startswith("https://"):
+        score += 1
+    if any(bad in low_url for bad in BAD_URL_HINTS):
+        score -= 4
+    if "cookie" in low_url and "privacy" not in low_url:
+        score -= 3
+    return score
+
+#thehint
+INDUSTRY_HINT = "IoT connected device manufacturer"
+
+
+def web_search_privacy_policy_urls(company_name: str, max_results: int = 10) -> list[dict[str, Any]]:
+    api_key = os.environ.get("BRAVE_SEARCH_API_KEY")
+    if not api_key:
+        raise RuntimeError("BRAVE_SEARCH_API_KEY is not set")
+
+    queries = [
+        f"{company_name} {INDUSTRY_HINT} official privacy policy",
+        f"{company_name} {INDUSTRY_HINT} privacy policy",
+        f"{company_name} privacy notice",
+        f"{company_name} privacy statement",
+    ]
+
+    results = []
+
+    for q in queries:
+        url = "https://api.search.brave.com/res/v1/web/search?" + urllib.parse.urlencode({
+            "q": q,
+            "count": 8,
+            "search_lang": "en",
+            "country": "us",
+            "safesearch": "moderate",
+        })
+
+        req = urllib.request.Request(
+            url,
+            headers={
+                "Accept": "application/json",
+                "X-Subscription-Token": api_key,
+                "User-Agent": DEFAULT_USER_AGENT,
+            },
         )
 
-        print("=== AUTO ADD CRAWLER REPORT ===", flush=True)
-        print(crawler_report, flush=True)
-        print("=== END AUTO ADD CRAWLER REPORT ===", flush=True)
+        try:
+            with urllib.request.urlopen(req, timeout=12) as resp:
+                data = json.loads(resp.read().decode("utf-8", errors="ignore"))
+        except Exception as exc:
+            print(f"[brave-search] query failed: {q} | {exc}")
+            continue
 
-        if not crawler_report.get("ok"):
-            return jsonify({
-                "error": crawler_report.get(
-                    "error",
-                    "Could not find a reliable official privacy policy URL for this manufacturer name."
+        for item in data.get("web", {}).get("results", []):
+            result_url = item.get("url", "")
+            title = item.get("title", "")
+            snippet = item.get("description", "")
+
+            if not result_url:
+                continue
+
+            results.append({
+                "url": result_url,
+                "title": clean_policy_text(title),
+                "snippet": clean_policy_text(snippet),
+                "query": q,
+                "search_engine": "Brave Search API",
+                "search_score": _search_result_score(
+                    company_name,
+                    result_url,
+                    title,
+                    snippet,
                 ),
-                "crawler_report": crawler_report,
-            }), 422
+            })
 
-        policy_text = (crawler_report.get("policy_text") or "").strip()
-        if not policy_text:
-            return jsonify({
-                "error": "Crawler found a page but could not extract readable policy text.",
-                "crawler_report": crawler_report,
-            }), 500
+        by_url = {}
+    for r in results:
+        if not r.get("url"):
+            continue
+        if r["url"] not in by_url or r["search_score"] > by_url[r["url"]]["search_score"]:
+            by_url[r["url"]] = r
 
-        existing = _find_mfg(name)
-        inst_iri = URIRef(existing["iri"]) if existing else _gen_iri(name)
+    # -----------------------------
+    # Remove EU/GDPR-specific pages
+    # -----------------------------
+    EU_HINTS = (
+        "/eu/",
+        "/eea/",
+        "/uk/",
+        "/en-gb/",
+        "europe",
+        "gdpr",
+        "privacy.eufy.com/eu",
+    )
 
-        if not existing:
-            g.add((inst_iri, RDF.type, MFG_CLS))
-            g.add((inst_iri, RDFS.label, Literal(name)))
-            g.add((inst_iri, USER_ADDED_PROP, Literal(True)))
+    filtered = [
+        r for r in by_url.values()
+        if not any(h in r["url"].lower() for h in EU_HINTS)
+    ]
 
-        ts_info = ts.upsert_policy(g, inst_iri, POLICY_PROP, policy_text)
+    # Only use the filtered list if we still have results.
+    if filtered:
+        ranked = sorted(filtered, key=lambda r: r["search_score"], reverse=True)
+    else:
+        ranked = sorted(by_url.values(), key=lambda r: r["search_score"], reverse=True)
 
-        auto = state_detector.detect_states_from_text(policy_text)
-        states = [s["id"] for s in auto["detected"]]
+        print("\n=== Ranked Candidate URLs ===")
+    for r in ranked:
+        print(r["search_score"], r["url"])
+    print("=============================\n")
 
-        for old in list(g.objects(inst_iri, APPLIES_TO_STATE_PROP)):
-            g.remove((inst_iri, APPLIES_TO_STATE_PROP, old))
-        for sid in states:
-            g.add((inst_iri, APPLIES_TO_STATE_PROP, Literal(sid)))
+    return [r for r in ranked if r.get("search_score", 0) >= 3][:max_results]
 
-        # Optional: store discovered policy URL in KG.
-        discovered_url = crawler_report.get("final_url") or crawler_report.get("policy_url")
-        if discovered_url:
-            POLICY_URL_PROP = URIRef("http://example.org/onto.owl#policy_url")
-            for old in list(g.objects(inst_iri, POLICY_URL_PROP)):
-                g.remove((inst_iri, POLICY_URL_PROP, old))
-            g.add((inst_iri, POLICY_URL_PROP, Literal(discovered_url)))
+def build_privacy_url_candidates(company_name: str) -> list[str]:
+    """
+    Build candidate policy URLs from real web-search results only.
 
-        entry = {
-            "iri": str(inst_iri),
-            "name": clean_name(name),
-            "policy": policy_text,
-            "user_added": True,
+    This intentionally replaces the old guessed-path implementation. The app no
+    longer depends on /privacy, /privacy-policy, etc. as the main discovery
+    method. It searches the web for "<manufacturer> official privacy policy" and
+    related queries, then candidate pages are fetched and validated below.
+    """
+    search_results = web_search_privacy_policy_urls(company_name, max_results=18)
+    return list(dict.fromkeys([r["url"] for r in search_results if r.get("url")]))
+
+
+def _looks_like_privacy_policy(company_name: str, url: str, text: str) -> tuple[bool, int, str]:
+    """
+    Lightweight source validation before using a URL.
+    Returns (valid_enough, score, reason).
+    """
+    low_text = clean_policy_text(text).lower()
+    low_url = (url or "").lower()
+    slug = _company_slug(company_name)
+
+    score = 0
+    reasons: list[str] = []
+
+    if "privacy policy" in low_text or "privacy notice" in low_text or "privacy statement" in low_text:
+        score += 4
+        reasons.append("page contains privacy-policy wording")
+    if "privacy" in low_url:
+        score += 2
+        reasons.append("URL contains privacy")
+    if slug and slug in urllib.parse.urlparse(low_url).netloc.replace(".", ""):
+        score += 2
+        reasons.append("domain appears related to company name")
+    if len(low_text) >= 1500:
+        score += 2
+        reasons.append("page has enough readable text")
+    if any(bad in low_url for bad in ["blog", "news", "press", "support/article"]):
+        score -= 2
+        reasons.append("URL may be blog/news/support content")
+
+    return score >= 5, score, "; ".join(reasons)
+
+#5  extracting policy from link
+def collect_policy_url_candidates(company_name: str, max_candidates_to_fetch: int = 10) -> list[dict[str, Any]]:
+    """
+    Real web-search + content validation.
+
+    1. Search the web for the manufacturer privacy policy.
+    2. Fetch top candidate pages.
+    3. Keep pages that look like full official privacy policies.
+    4. Pass those pages to the LLM selector.
+    """
+    out: list[dict[str, Any]] = []
+    search_results = web_search_privacy_policy_urls(company_name, max_results=max_candidates_to_fetch)
+    _discovery_log(f"company={company_name} search_results={len(search_results)}")
+
+    for idx, result in enumerate(search_results[:max_candidates_to_fetch], start=1):
+        url = result.get("url")
+        if not url:
+            continue
+        search_score = int(result.get("search_score", 0) or 0)
+        _discovery_log(f"candidate={idx} url={url} search_score={search_score}")
+        try:
+            fetched = fetch_policy_source(url, timeout=12)
+            final_url = fetched.get("url") or url
+            text = extract_policy_text(fetched)
+            ok, score, reason = _looks_like_privacy_policy(company_name, final_url, text)
+
+            # Blend search score and page validation score.
+            combined_score = search_score + int(score)
+            _discovery_log(
+                f"candidate={idx} fetch=SUCCESS final_url={final_url} "
+                f"text_length={len(text)} validation_score={score} valid={ok} "
+                f"combined_score={combined_score} reason={reason}"
+            )
+
+            if ok:
+                out.append({
+                    "url": final_url,
+                    "score": combined_score,
+                    "search_score": search_score,
+                    "validation_score": score,
+                    "search_title": result.get("title", ""),
+                    "search_engine": result.get("search_engine", ""),
+                    "query": result.get("query", ""),
+                    "reason": f"search: {result.get('title','')}; validation: {reason}",
+                    "text_preview": clean_policy_text(text)[:1000],
+                    "text_length": len(text),
+                })
+        except Exception as exc:
+            _discovery_log(f"candidate={idx} fetch=FAILED url={url} error={type(exc).__name__}: {exc}")
+            continue
+
+    out.sort(key=lambda x: x.get("score", 0), reverse=True)
+    _discovery_log(f"company={company_name} validated_candidates={len(out)}")
+    for rank, candidate in enumerate(out[:8], start=1):
+        _discovery_log(
+            f"validated={rank} url={candidate.get('url')} score={candidate.get('score')} "
+            f"validation_score={candidate.get('validation_score')} text_length={candidate.get('text_length')}"
+        )
+    return out[:8]
+
+#6 select which link is best
+def _deterministic_policy_candidate_score(company_name: str, candidate: dict[str, Any]) -> tuple[int, list[str]]:
+    """Rank candidates without an LLM, preferring the manufacturer's general policy.
+
+    The normal search/validation score measures whether a page *looks* like a
+    privacy policy.  It does not distinguish a general manufacturer policy from
+    a specialized notice such as an Alexa/Ava/service-program notice.  This
+    second score adds that distinction while keeping the original score intact.
+    """
+    url = str(candidate.get("url") or "").lower()
+    title = str(candidate.get("title") or candidate.get("search_title") or "").lower()
+    reason = str(candidate.get("reason") or "").lower()
+    preview = str(candidate.get("text_preview") or "").lower()
+    text = " ".join((url, title, reason, preview))
+
+    score = int(candidate.get("score", 0) or 0)
+    reasons: list[str] = []
+
+    # Strong positive evidence that this is the manufacturer's general policy.
+    generic_terms = (
+        "privacy policy", "privacy notice", "privacy statement", "privacy policy -"
+    )
+    if any(term in title for term in generic_terms):
+        score += 5
+        reasons.append("generic privacy-policy title")
+    elif any(term in url for term in ("/privacy-policy", "/privacy_policy", "/privacy")):
+        score += 3
+        reasons.append("generic privacy-policy URL")
+
+    # Prefer the manufacturer's own domain over a service-specific host when
+    # the candidate otherwise has comparable validation evidence.
+    company_tokens = [t for t in re.findall(r"[a-z0-9]+", company_name.lower()) if len(t) >= 3]
+    host_match = any(token in url for token in company_tokens)
+    if host_match:
+        score += 3
+        reasons.append("manufacturer domain match")
+
+    # Penalize pages that are clearly scoped to a product, service, program,
+    # region, or feature. These are useful candidates, but should lose to a
+    # general manufacturer policy when both are otherwise strong.
+    specialized_terms = (
+        "alexa", "ava service", "assistant", "user-experience-improvement",
+        "improvement-program", "service privacy", "product privacy", "app privacy",
+        "cookie", "sdk", "developer", "support", "help.", "program privacy",
+        "experience improvement", "specific service"
+    )
+    penalties = sum(1 for term in specialized_terms if term in text)
+    if penalties:
+        penalty = min(10, penalties * 3)
+        score -= penalty
+        reasons.append(f"specialized-page penalty -{penalty}")
+
+    # Regional duplicates should not beat a base/global manufacturer policy
+    # unless their evidence is materially stronger.
+    regional_terms = ("/eu-", "/uk-", "/hr-", "/de-", "/fr-", "/it-", "/es-")
+    if any(term in url for term in regional_terms):
+        score -= 2
+        reasons.append("regional duplicate penalty -2")
+
+    return score, reasons
+
+
+def _select_deterministic_policy_candidate(company_name: str, candidates: list[dict[str, Any]]) -> tuple[dict[str, Any], int, list[str]]:
+    ranked = [(_deterministic_policy_candidate_score(company_name, c), c) for c in candidates]
+    ranked.sort(key=lambda item: (item[0][0], int(item[1].get("validation_score", 0) or 0), int(item[1].get("text_length", 0) or 0)), reverse=True)
+    (score, reasons), best = ranked[0]
+    return best, score, reasons
+
+
+def llm_select_policy_url(
+    company_name: str,
+    candidates: list[dict[str, Any]],
+    llm_client: Any = None,
+    llm_model: str = "openai/gpt-oss-20b",
+    llm_callable: Optional[Callable[[str, str], str]] = None,
+) -> dict[str, Any]:
+    """
+    LLM selector for the source-discovery step.
+    It chooses the most official privacy-policy URL from candidate pages.
+    It does not update the KG.
+    """
+    if not candidates:
+        return {
+            "selected_policy_url": None,
+            "confidence": "none",
+            "llm_used_for_url": False,
+            "reason": "No candidate privacy policy pages were found.",
         }
 
-        if existing:
-            manufacturers[:] = [m for m in manufacturers if m["iri"] != str(inst_iri)]
-        manufacturers.append(entry)
-        manufacturers.sort(key=lambda m: m["name"].lower())
+    # In the real-search implementation, the LLM is the source-selection agent.
+    # Only skip the LLM when no client/callable is configured.
 
-        # Populate/update all manufacturer-level assessment metadata, including
-        # the four dynamic regulatory-document class counts.
-        assessment_score = update_assessment_score(str(inst_iri), policy_text)
-        statute_class_counts = regulatory_statute_counts()
+    system = (
+        "You select the official, general privacy policy URL for a company. "
+        "Return one valid JSON object and nothing else. Reject blogs, news articles, summaries, "
+        "cookie-setting pages, and unrelated third-party pages. Prefer the manufacturer's general "
+        "privacy policy over a privacy notice limited to a named product, assistant, service, app, "
+        "program, or regional duplicate when both are otherwise valid."
+    )
+    candidate_lines = []
+    for i, c in enumerate(candidates, start=1):
+        candidate_lines.append(
+            f"{i}. URL: {c.get('url')}\n"
+            f"   Score: {c.get('score')}\n"
+            f"   Reason: {c.get('reason')}\n"
+            f"   Preview: {c.get('text_preview')}"
+        )
 
-        g.serialize(destination=str(ONTO_PATH), format="xml")
+    user = f"""
+Company: {company_name}
 
-        return jsonify({
-            "iri": entry["iri"],
-            "name": entry["name"],
-            "action": ts_info["action"],
-            "created_at": ts_info["created_at"],
-            "modified_at": ts_info["modified_at"],
-            "policy_length": len(policy_text),
-            "discovered_policy_url": discovered_url,
-            "auto_detected_states": auto,
-            "selected_states": states,
-            "applicable_laws": state_detector.applicable_laws(states, LAWS),
-            "AssessmentScore": assessment_score,
-            "statute_class_counts": statute_class_counts,
-            "crawler_report": crawler_report,
-        }), 200 if existing else 201
+Candidate privacy-policy pages:
+{chr(10).join(candidate_lines)}
 
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return jsonify({
-            "error": str(e),
-            "traceback": traceback.format_exc(),
-        }), 500
+Choose the best official privacy policy URL for this company.
+
+Return exactly:
+{{
+  "selected_policy_url": "URL or null",
+  "confidence": "high / medium / low / none",
+  "reason": "short explanation"
+}}
+""".strip()
+
+    if llm_callable is not None:
+        raw = llm_callable(system, user)
+    elif llm_client is not None:
+        resp = llm_client.chat.completions.create(
+            model=llm_model,
+            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+            temperature=0.0,
+            max_tokens=220,
+        )
+        raw = resp.choices[0].message.content.strip()
+    else:
+        # Deterministic fallback: prefer a general manufacturer privacy policy
+        # over a specialized service/product notice.
+        best, deterministic_score, fallback_reasons = _select_deterministic_policy_candidate(
+            company_name, candidates
+        )
+        return {
+            "selected_policy_url": best.get("url"),
+            "confidence": "medium",
+            "llm_used_for_url": False,
+            "reason": "No LLM client configured; selected the strongest general-policy candidate. "
+                      + "; ".join(fallback_reasons),
+            "deterministic_score": deterministic_score,
+            "candidates": candidates,
+        }
+
+    try:
+        data = _json_from_llm(raw)
+    except Exception as exc:
+        best, deterministic_score, fallback_reasons = _select_deterministic_policy_candidate(
+            company_name, candidates
+        )
+        _discovery_log(
+            f"llm_selection company={company_name} parse=FAILED error={type(exc).__name__}: {exc}; "
+            f"fallback_url={best.get('url')} deterministic_score={deterministic_score} confidence=medium"
+        )
+        return {
+            "selected_policy_url": best.get("url"),
+            "confidence": "medium",
+            "llm_used_for_url": True,
+            "reason": "LLM returned invalid JSON; used deterministic general-policy fallback. "
+                      + "; ".join(fallback_reasons),
+            "deterministic_score": deterministic_score,
+            "candidates": candidates,
+        }
+
+    selected = data.get("selected_policy_url")
+    confidence = str(data.get("confidence") or "low").lower()
+    if confidence not in {"high", "medium", "low", "none"}:
+        confidence = "low"
+
+    valid_urls = {c["url"] for c in candidates}
+    if selected not in valid_urls:
+        selected = None
+        confidence = "none"
+    else:
+        # The candidates passed through deterministic content validation before
+        # reaching the LLM.  A valid candidate therefore already has direct
+        # fetch evidence that it looks like an actual privacy-policy page.
+        # Do not let a conservative/variable LLM confidence label turn that
+        # verified evidence into a hard "low confidence" rejection.
+        selected_candidate = next((c for c in candidates if c.get("url") == selected), None)
+        if selected_candidate:
+            validation_score = int(selected_candidate.get("validation_score", 0) or 0)
+            text_length = int(selected_candidate.get("text_length", 0) or 0)
+            if confidence == "low" and validation_score >= 5 and text_length >= 1500:
+                confidence = "medium"
+
+        print("\n========== LLM URL SELECTION ==========")
+    print(f"Company: {company_name}")
+    print(f"Selected URL: {selected}")
+    print(f"Confidence: {confidence}")
+    print(f"Reason: {data.get('reason')}")
+    print("=======================================\n")
+    _discovery_log(
+        f"llm_selection company={company_name} selected={selected} confidence={confidence} "
+        f"reason={str(data.get('reason') or '')}"
+    )
+
+    return {
+        "selected_policy_url": selected,
+        "confidence": confidence,
+        "llm_used_for_url": True,
+        "reason": str(data.get("reason") or ""),
+        "candidates": candidates,
+    }
+
+#2
+def discover_policy_url_agent(
+    company_name: str,
+    llm_client: Any = None,
+    llm_model: str = "openai/gpt-oss-20b",
+    llm_callable: Optional[Callable[[str, str], str]] = None,
+) -> dict[str, Any]:
+    """
+    find the official policy URL from only the manufacturer name.
+
+    Uses real web search first, fetches candidate pages, then uses the LLM as
+    the selector/validator agent.
+    """
+    _discovery_log(f"START company={company_name}")
+    candidates = collect_policy_url_candidates(company_name)
+    result = llm_select_policy_url(
+        company_name=company_name,
+        candidates=candidates,
+        llm_client=llm_client,
+        llm_model=llm_model,
+        llm_callable=llm_callable,
+    )
+    result["company"] = company_name
+    result["discovery_method"] = "real_web_search_plus_llm_selector"
+    result["search_queries"] = [
+        f"{company_name} official privacy policy",
+        f"{company_name} privacy policy",
+        f"{company_name} privacy notice",
+    ]
+    _discovery_log(
+        f"END company={company_name} selected={result.get('selected_policy_url')} "
+        f"confidence={result.get('confidence')} candidates={len(result.get('candidates') or [])}"
+    )
+    return result
+
+#4 
+def fetch_live_policy_for_company_name(
+    company_name: str,
+    llm_client: Any = None,
+    llm_model: str = "openai/gpt-oss-20b",
+    llm_callable: Optional[Callable[[str, str], str]] = None,
+) -> dict[str, Any]:
+    """
+    Used by Classify button.
+
+    Input: only a manufacturer name.
+    Output: discovered URL + extracted live policy text + date metadata.
+    """
+    source = discover_policy_url_agent(
+        company_name=company_name,
+        llm_client=llm_client,
+        llm_model=llm_model,
+        llm_callable=llm_callable,
+    )
+    policy_url = source.get("selected_policy_url")
+    _discovery_log(
+        f"final_source company={company_name} url={policy_url} confidence={source.get('confidence')}"
+    )
+    if not policy_url:
+        return {
+            "ok": False,
+            "status": "source_not_found",
+            "company": company_name,
+            "source_discovery": source,
+            "error": "Could not find a reliable official privacy policy URL for this manufacturer name.",
+        }
+
+    if source.get("confidence") not in {"high", "medium"}:
+        _discovery_log(
+            f"REJECT company={company_name} reason=source_low_confidence "
+            f"url={policy_url} confidence={source.get('confidence')}"
+        )
+        return {
+            "ok": False,
+            "status": "source_low_confidence",
+            "company": company_name,
+            "policy_url": policy_url,
+            "source_discovery": source,
+            "error": "Policy URL was found, but confidence was too low for automatic KG insertion.",
+        }
+
+    try:
+        fetched = fetch_policy_source(policy_url)
+    except Exception as exc:
+        _discovery_log(
+            f"FINAL_FETCH_FAILED company={company_name} url={policy_url} "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        return {
+            "ok": False,
+            "status": "policy_fetch_failed",
+            "company": company_name,
+            "policy_url": policy_url,
+            "source_discovery": source,
+            "error": f"Could not fetch the discovered privacy policy: {exc}",
+        }
+    live_policy_text = extract_policy_text(fetched)
+    _discovery_log(
+        f"FINAL_FETCH_SUCCESS company={company_name} final_url={fetched.get('url') or policy_url} "
+        f"text_length={len(live_policy_text)}"
+    )
+    if len(live_policy_text) < 500:
+        _discovery_log(f"REJECT company={company_name} reason=policy_text_too_short text_length={len(live_policy_text)}")
+        return {
+            "ok": False,
+            "status": "policy_text_too_short",
+            "company": company_name,
+            "policy_url": policy_url,
+            "source_discovery": source,
+            "error": "The discovered page did not contain enough readable policy text.",
+        }
+
+    live_date, llm_used_for_date = extract_policy_date_agent(
+        live_policy_text,
+        last_modified_header=fetched.get("last_modified_header"),
+        llm_client=llm_client,
+        llm_model=llm_model,
+        llm_callable=llm_callable,
+    )
+
+    return {
+        "ok": True,
+        "status": "policy_found",
+        "company": company_name,
+        "policy_url": policy_url,
+        "final_url": fetched.get("url") or policy_url,
+        "policy_text": live_policy_text,
+        "policy_text_length": len(live_policy_text),
+        "live_date": format_date(live_date.parsed),
+        "live_date_raw": live_date.raw or None,
+        "date_label": live_date.label or None,
+        "date_confidence": live_date.confidence,
+        "date_source": live_date.source,
+        "date_evidence": live_date.evidence or None,
+        "llm_used_for_date": llm_used_for_date,
+        "source_discovery": source,
+    }
 
 
-if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+def auto_check_and_update_company_policy(
+    *,
+    company_name: str,
+    manufacturer_iri: URIRef,
+    stored_policy_text: str,
+    g: Graph,
+    policy_prop: URIRef,
+    onto_path: Optional[str],
+    groq_client: Any = None,
+    timestamp_module: Any = None,
+) -> dict[str, Any]:
+    """
+    Automatic update pipeline for an existing manufacturer.
+    It discovers the policy URL from the manufacturer name, then runs the
+    existing date comparison + KG update pipeline.
+    """
+    source = discover_policy_url_agent(company_name=company_name, llm_client=groq_client)
+    policy_url = source.get("selected_policy_url")
+
+    if not policy_url:
+        return {
+            "target_type": "company_policy",
+            "company": company_name,
+            "status": "source_not_found",
+            "action_taken": "No KG update was made because no official privacy policy URL could be verified.",
+            "source_discovery": source,
+            "discovered_policy_url": None,
+            "llm_used_for_url": source.get("llm_used_for_url", False),
+        }
+
+    report = check_and_update_company_policy(
+        g=g,
+        manufacturer_iri=manufacturer_iri,
+        policy_prop=policy_prop,
+        policy_url=policy_url,
+        company_name=company_name,
+        timestamp_module=timestamp_module,
+        ontology_path=str(onto_path) if onto_path else None,
+        llm_client=groq_client,
+    )
+    report["source_discovery"] = source
+    report["discovered_policy_url"] = policy_url
+    report["llm_used_for_url"] = source.get("llm_used_for_url", False)
+    return report
