@@ -61,6 +61,17 @@ LAW_ASSESSMENT_SCORE_PROPS = {
     "IoT_Cyber_Act_2020": URIRef("http://example.org/onto.owl#PublicLaw116207AssessmentScore"),
 }
 
+# Dynamically maintained count of regulatory classes/statutes represented in the KG
+# for each manufacturer. The values are recomputed from the current regulatory
+# class corpus rather than hard-coded, so regulation updates automatically
+# change the stored counts.
+LAW_STATUTE_COUNT_PROPS = {
+    "CA_SB_327": URIRef("http://example.org/onto.owl#CaliforniaStatutesFound"),
+    "OR_HB_2395": URIRef("http://example.org/onto.owl#OregonStatutesFound"),
+    "NISTIR_8259": URIRef("http://example.org/onto.owl#NISTIR8259StatutesFound"),
+    "IoT_Cyber_Act_2020": URIRef("http://example.org/onto.owl#PublicLaw116207StatutesFound"),
+}
+
 # =============================================================================
 # STATE NORMALISATION  (frontend value → STATE_CATALOG ID)
 # =============================================================================
@@ -163,6 +174,61 @@ for idx, c_iri in enumerate(class_iris):
 
 for law in LAWS:
     print(f"[init] {law['id']}: {len(law_to_class_idxs[law['id']])} classes")
+
+
+def regulatory_statute_counts():
+    """Return current KG regulatory-class counts for each tracked document.
+
+    Counts are rebuilt directly from the graph so a regulation upload/update
+    is reflected immediately; they are not hard-coded constants. Classes are
+    de-duplicated by their display label, matching the assessment corpus.
+    """
+    counts = {law_id: 0 for law_id in LAW_STATUTE_COUNT_PROPS}
+    seen_by_law = {law_id: set() for law_id in LAW_STATUTE_COUNT_PROPS}
+
+    for c in g.subjects(RDF.type, OWL.Class):
+        if not isinstance(c, URIRef):
+            continue
+        law_ids = _law_ids_for_class(c)
+        if not law_ids:
+            continue
+        label = _class_label(c).strip().lower()
+        if not label:
+            continue
+        for law_id in law_ids & set(LAW_STATUTE_COUNT_PROPS):
+            seen_by_law[law_id].add(label)
+
+    for law_id in counts:
+        counts[law_id] = len(seen_by_law[law_id])
+    return counts
+
+
+def get_manufacturer_statute_counts(manufacturer_iri):
+    """Read the four policy-specific class-count datatype values from the KG."""
+    iri = URIRef(manufacturer_iri)
+    out = {}
+    for law_id, prop in LAW_STATUTE_COUNT_PROPS.items():
+        value = next(g.objects(iri, prop), None)
+        out[law_id] = int(value) if value is not None else None
+    return out
+
+
+def update_manufacturer_statute_counts(manufacturer_iri, policy):
+    """Persist policy-specific covered-class counts for one manufacturer.
+
+    A value is the number of regulatory classes for that document whose
+    semantic similarity to THIS manufacturer's privacy policy meets the
+    configured coverage threshold.  It is deliberately calculated only when
+    a manufacturer is created or an existing manufacturer's policy is
+    explicitly checked/updated; startup does not populate these fields.
+    """
+    iri = URIRef(manufacturer_iri)
+    scores = compute_scores(policy or "", "all")
+    counts = {item["id"]: int(item.get("num_above", 0))
+              for item in scores.get("law_coverage", [])}
+    for law_id, prop in LAW_STATUTE_COUNT_PROPS.items():
+        g.set((iri, prop, Literal(counts.get(law_id, 0), datatype=XSD.integer)))
+    return counts
 
 print(f"[init] Encoding {len(class_texts)} classes with BERT...")
 _bert = SentenceTransformer(EMBED_MODEL)
@@ -385,8 +451,8 @@ def compute_scores(policy, state):
             "covered": covered, "missing": missing, "weighted": weighted}
 
 
-def update_assessment_score(manufacturer_iri, policy):
-    """Persist the overall score plus one score for each requested regulation."""
+def update_assessment_score(manufacturer_iri, policy, update_statute_counts=False):
+    """Persist assessment scores; optionally refresh policy-specific class counts."""
     iri = URIRef(manufacturer_iri)
     if not (policy or "").strip():
         overall = 0.0
@@ -404,6 +470,9 @@ def update_assessment_score(manufacturer_iri, policy):
            Literal(f"{overall:.2f}", datatype=XSD.decimal)))
     for law_id, prop in LAW_ASSESSMENT_SCORE_PROPS.items():
         g.set((iri, prop, Literal(f"{per_law.get(law_id, 0.0):.2f}", datatype=XSD.decimal)))
+
+    if update_statute_counts:
+        update_manufacturer_statute_counts(iri, policy)
     return round(overall, 2)
 
 
@@ -850,7 +919,11 @@ def classify_existing():
 
     # ── Step 3: score the (possibly refreshed) policy ────────────────────
     scores = compute_scores(mfg["policy"], state)
-    assessment_score = update_assessment_score(mfg["iri"], mfg["policy"])
+    # A manual Classify/check is an explicit refresh point for the four
+    # policy-specific statutes/classes-found datatype values.
+    assessment_score = update_assessment_score(
+        mfg["iri"], mfg["policy"], update_statute_counts=True
+    )
     g.serialize(destination=str(ONTO_PATH), format="xml")
 
     return jsonify({
@@ -860,6 +933,7 @@ def classify_existing():
         "state":         state,
         "overall":       scores["overall"],
         "AssessmentScore": assessment_score,
+        "statute_class_counts": get_manufacturer_statute_counts(mfg["iri"]),
         "law_scores": {
             item["id"]: item["coverage_percent"]
             for item in scores["law_coverage"]
@@ -919,7 +993,11 @@ def add_manufacturer():
     for sid in states:
         g.add((inst_iri, APPLIES_TO_STATE_PROP, Literal(sid)))
 
-    assessment_score = update_assessment_score(str(inst_iri), policy)
+    assessment_score = update_assessment_score(str(inst_iri), policy, update_statute_counts=True)
+    statute_class_counts = {
+        law_id: int(next((o for o in g.objects(URIRef(inst_iri), prop)), 0))
+        for law_id, prop in LAW_STATUTE_COUNT_PROPS.items()
+    }
 
     entry = {"iri": str(inst_iri), "name": clean_name(name),
              "policy": policy, "user_added": True}
@@ -940,6 +1018,7 @@ def add_manufacturer():
                     "auto_detected_states": auto, "selected_states": states,
                     "applicable_laws": state_detector.applicable_laws(states, LAWS),
                     "AssessmentScore": assessment_score,
+                    "statute_class_counts": statute_class_counts,
                     }), 200 if existing else 201
 
 
@@ -988,8 +1067,13 @@ def upload_regulation():
                 created.append(n["label"])
         reg_add.register_law_in_config("config.json", law_id, law_label,
                                        [law_label, law_id.replace("_", " ")])
+        # Regulation updates change the regulatory corpus, but do not populate
+        # manufacturer-specific "statutes/classes found" values. Those values
+        # are refreshed only when a manufacturer is created or explicitly
+        # checked/updated.
         g.serialize(destination=str(ONTO_PATH), format="xml")
-        return jsonify({"annotated": annotated, "created": created})
+        return jsonify({"annotated": annotated, "created": created,
+                        "statute_class_counts": regulatory_statute_counts()})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     finally:
@@ -1007,9 +1091,13 @@ def update_regulation():
     result = reg_update.update_regulation(g, base, **{k: data[k] for k in
                 ["law_label","law_id","new_version","updated_classes"]})
     try:
+        # Do not populate manufacturer-specific class counts merely because
+        # the regulatory corpus changed. They refresh on manufacturer create
+        # or an explicit policy check/update.
         g.serialize(destination=str(ONTO_PATH), format="xml")
     except Exception as e:
         return jsonify({"error": str(e), **result}), 500
+    result["statute_class_counts"] = regulatory_statute_counts()
     return jsonify(result)
 
 
@@ -1065,9 +1153,10 @@ def check_company_policy_update():
             if pols:
                 mfg["policy"] = max(pols, key=len)
 
-        assessment_score = update_assessment_score(iri, mfg["policy"])
+        assessment_score = update_assessment_score(iri, mfg["policy"], update_statute_counts=True)
         g.serialize(destination=str(ONTO_PATH), format="xml")
         report["AssessmentScore"] = assessment_score
+        report["statute_class_counts"] = get_manufacturer_statute_counts(iri)
         return jsonify(report), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -1186,6 +1275,14 @@ def auto_add_manufacturer():
         manufacturers.append(entry)
         manufacturers.sort(key=lambda m: m["name"].lower())
 
+        # Populate/update all manufacturer-level assessment metadata, including
+        # the four dynamic regulatory-document class counts.
+        assessment_score = update_assessment_score(str(inst_iri), policy_text, update_statute_counts=True)
+        statute_class_counts = {
+            law_id: int(next((o for o in g.objects(inst_iri, prop)), 0))
+            for law_id, prop in LAW_STATUTE_COUNT_PROPS.items()
+        }
+
         g.serialize(destination=str(ONTO_PATH), format="xml")
 
         return jsonify({
@@ -1199,6 +1296,8 @@ def auto_add_manufacturer():
             "auto_detected_states": auto,
             "selected_states": states,
             "applicable_laws": state_detector.applicable_laws(states, LAWS),
+            "AssessmentScore": assessment_score,
+            "statute_class_counts": statute_class_counts,
             "crawler_report": crawler_report,
         }), 200 if existing else 201
 
