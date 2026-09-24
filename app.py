@@ -1128,6 +1128,10 @@ def auto_add_manufacturer():
             llm_client=groq_client,
         )
 
+        print("=== AUTO ADD CRAWLER REPORT ===", flush=True)
+        print(crawler_report, flush=True)
+        print("=== END AUTO ADD CRAWLER REPORT ===", flush=True)
+
         if not crawler_report.get("ok"):
             return jsonify({
                 "error": crawler_report.get(
@@ -1135,7 +1139,7 @@ def auto_add_manufacturer():
                     "Could not find a reliable official privacy policy URL for this manufacturer name."
                 ),
                 "crawler_report": crawler_report,
-            }), 404
+            }), 422
 
         policy_text = (crawler_report.get("policy_text") or "").strip()
         if not policy_text:
