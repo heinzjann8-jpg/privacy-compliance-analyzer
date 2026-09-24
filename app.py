@@ -824,6 +824,13 @@ def classify_existing():
             "tool_calls_made":  result.get("tool_calls_made", 0),
             "write_result":     result.get("write_result"),
         }
+        print(
+            f"[policy-discovery] classify_existing company={mfg['name']} "
+            f"wrote_update={crawler_report['wrote_update']} "
+            f"tool_calls={crawler_report['tool_calls_made']} "
+            f"summary={crawler_report['finish_summary']}",
+            flush=True,
+        )
 
         # ── Step 2: sync in-memory list if KG was updated ─────────────────
         if result.get("wrote_update"):
@@ -834,6 +841,11 @@ def classify_existing():
 
     except Exception as e:
         # Crawler failure is non-fatal — fall through and score what we have.
+        print(
+            f"[policy-discovery] classify_existing company={mfg['name']} ERROR "
+            f"{type(e).__name__}: {e}",
+            flush=True,
+        )
         crawler_report = {"error": str(e), "wrote_update": False}
 
     # ── Step 3: score the (possibly refreshed) policy ────────────────────
