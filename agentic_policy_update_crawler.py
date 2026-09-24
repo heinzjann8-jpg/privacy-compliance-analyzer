@@ -14,6 +14,11 @@ from typing import Any, Callable, Optional
 
 from rdflib import Graph, URIRef, Literal, XSD
 
+
+def _discovery_log(message: str) -> None:
+    """Emit concise policy-discovery diagnostics to Render/Gunicorn stdout."""
+    print(f"[policy-discovery] {message}", flush=True)
+
 DCTERMS_CREATED = URIRef("http://purl.org/dc/terms/created")
 DCTERMS_MODIFIED = URIRef("http://purl.org/dc/terms/modified")
 
@@ -775,11 +780,14 @@ def collect_policy_url_candidates(company_name: str, max_candidates_to_fetch: in
     """
     out: list[dict[str, Any]] = []
     search_results = web_search_privacy_policy_urls(company_name, max_results=max_candidates_to_fetch)
+    _discovery_log(f"company={company_name} search_results={len(search_results)}")
 
-    for result in search_results[:max_candidates_to_fetch]:
+    for idx, result in enumerate(search_results[:max_candidates_to_fetch], start=1):
         url = result.get("url")
         if not url:
             continue
+        search_score = int(result.get("search_score", 0) or 0)
+        _discovery_log(f"candidate={idx} url={url} search_score={search_score}")
         try:
             fetched = fetch_policy_source(url, timeout=12)
             final_url = fetched.get("url") or url
@@ -787,13 +795,18 @@ def collect_policy_url_candidates(company_name: str, max_candidates_to_fetch: in
             ok, score, reason = _looks_like_privacy_policy(company_name, final_url, text)
 
             # Blend search score and page validation score.
-            combined_score = int(result.get("search_score", 0)) + int(score)
+            combined_score = search_score + int(score)
+            _discovery_log(
+                f"candidate={idx} fetch=SUCCESS final_url={final_url} "
+                f"text_length={len(text)} validation_score={score} valid={ok} "
+                f"combined_score={combined_score} reason={reason}"
+            )
 
             if ok:
                 out.append({
                     "url": final_url,
                     "score": combined_score,
-                    "search_score": result.get("search_score", 0),
+                    "search_score": search_score,
                     "validation_score": score,
                     "search_title": result.get("title", ""),
                     "search_engine": result.get("search_engine", ""),
@@ -803,9 +816,16 @@ def collect_policy_url_candidates(company_name: str, max_candidates_to_fetch: in
                     "text_length": len(text),
                 })
         except Exception as exc:
+            _discovery_log(f"candidate={idx} fetch=FAILED url={url} error={type(exc).__name__}: {exc}")
             continue
 
     out.sort(key=lambda x: x.get("score", 0), reverse=True)
+    _discovery_log(f"company={company_name} validated_candidates={len(out)}")
+    for rank, candidate in enumerate(out[:8], start=1):
+        _discovery_log(
+            f"validated={rank} url={candidate.get('url')} score={candidate.get('score')} "
+            f"validation_score={candidate.get('validation_score')} text_length={candidate.get('text_length')}"
+        )
     return out[:8]
 
 #6 select which link is best
@@ -885,8 +905,12 @@ Return exactly:
 
     try:
         data = _json_from_llm(raw)
-    except Exception:
+    except Exception as exc:
         best = candidates[0]
+        _discovery_log(
+            f"llm_selection company={company_name} parse=FAILED error={type(exc).__name__}: {exc}; "
+            f"fallback_url={best.get('url')} confidence=low"
+        )
         return {
             "selected_policy_url": best.get("url"),
             "confidence": "low",
@@ -923,7 +947,10 @@ Return exactly:
     print(f"Confidence: {confidence}")
     print(f"Reason: {data.get('reason')}")
     print("=======================================\n")
-
+    _discovery_log(
+        f"llm_selection company={company_name} selected={selected} confidence={confidence} "
+        f"reason={str(data.get('reason') or '')}"
+    )
 
     return {
         "selected_policy_url": selected,
@@ -946,6 +973,7 @@ def discover_policy_url_agent(
     Uses real web search first, fetches candidate pages, then uses the LLM as
     the selector/validator agent.
     """
+    _discovery_log(f"START company={company_name}")
     candidates = collect_policy_url_candidates(company_name)
     result = llm_select_policy_url(
         company_name=company_name,
@@ -961,6 +989,10 @@ def discover_policy_url_agent(
         f"{company_name} privacy policy",
         f"{company_name} privacy notice",
     ]
+    _discovery_log(
+        f"END company={company_name} selected={result.get('selected_policy_url')} "
+        f"confidence={result.get('confidence')} candidates={len(result.get('candidates') or [])}"
+    )
     return result
 
 #4 
@@ -983,6 +1015,9 @@ def fetch_live_policy_for_company_name(
         llm_callable=llm_callable,
     )
     policy_url = source.get("selected_policy_url")
+    _discovery_log(
+        f"final_source company={company_name} url={policy_url} confidence={source.get('confidence')}"
+    )
     if not policy_url:
         return {
             "ok": False,
@@ -993,6 +1028,10 @@ def fetch_live_policy_for_company_name(
         }
 
     if source.get("confidence") not in {"high", "medium"}:
+        _discovery_log(
+            f"REJECT company={company_name} reason=source_low_confidence "
+            f"url={policy_url} confidence={source.get('confidence')}"
+        )
         return {
             "ok": False,
             "status": "source_low_confidence",
@@ -1002,9 +1041,28 @@ def fetch_live_policy_for_company_name(
             "error": "Policy URL was found, but confidence was too low for automatic KG insertion.",
         }
 
-    fetched = fetch_policy_source(policy_url)
+    try:
+        fetched = fetch_policy_source(policy_url)
+    except Exception as exc:
+        _discovery_log(
+            f"FINAL_FETCH_FAILED company={company_name} url={policy_url} "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        return {
+            "ok": False,
+            "status": "policy_fetch_failed",
+            "company": company_name,
+            "policy_url": policy_url,
+            "source_discovery": source,
+            "error": f"Could not fetch the discovered privacy policy: {exc}",
+        }
     live_policy_text = extract_policy_text(fetched)
+    _discovery_log(
+        f"FINAL_FETCH_SUCCESS company={company_name} final_url={fetched.get('url') or policy_url} "
+        f"text_length={len(live_policy_text)}"
+    )
     if len(live_policy_text) < 500:
+        _discovery_log(f"REJECT company={company_name} reason=policy_text_too_short text_length={len(live_policy_text)}")
         return {
             "ok": False,
             "status": "policy_text_too_short",
