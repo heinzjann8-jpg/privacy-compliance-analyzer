@@ -739,14 +739,22 @@ def build_privacy_url_candidates(company_name: str) -> list[str]:
     return list(dict.fromkeys([r["url"] for r in search_results if r.get("url")]))
 
 
+MIN_POLICY_TEXT_LENGTH = 500
+
+
 def _looks_like_privacy_policy(company_name: str, url: str, text: str) -> tuple[bool, int, str]:
     """
     Lightweight source validation before using a URL.
     Returns (valid_enough, score, reason).
     """
-    low_text = clean_policy_text(text).lower()
+    cleaned_text = clean_policy_text(text)
+    low_text = cleaned_text.lower()
     low_url = (url or "").lower()
     slug = _company_slug(company_name)
+
+    # Hard gate: title/redirect shells are never policy candidates.
+    if len(cleaned_text) < MIN_POLICY_TEXT_LENGTH:
+        return False, 0, f"policy text too short ({len(cleaned_text)} < {MIN_POLICY_TEXT_LENGTH})"
 
     score = 0
     reasons: list[str] = []
@@ -892,8 +900,22 @@ def _deterministic_policy_candidate_score(company_name: str, candidate: dict[str
 
 
 def _select_deterministic_policy_candidate(company_name: str, candidates: list[dict[str, Any]]) -> tuple[dict[str, Any], int, list[str]]:
-    ranked = [(_deterministic_policy_candidate_score(company_name, c), c) for c in candidates]
-    ranked.sort(key=lambda item: (item[0][0], int(item[1].get("validation_score", 0) or 0), int(item[1].get("text_length", 0) or 0)), reverse=True)
+    # Hard safety gate: fallback may rank only candidates with substantial
+    # fetched text and a positive policy-validation score.
+    usable = [
+        c for c in candidates
+        if int(c.get("text_length", 0) or 0) >= MIN_POLICY_TEXT_LENGTH
+        and int(c.get("validation_score", 0) or 0) >= 5
+    ]
+    if not usable:
+        raise ValueError("No usable privacy-policy candidate passed the deterministic safety gate")
+
+    ranked = [(_deterministic_policy_candidate_score(company_name, c), c) for c in usable]
+    ranked.sort(key=lambda item: (
+        item[0][0],
+        int(item[1].get("validation_score", 0) or 0),
+        int(item[1].get("text_length", 0) or 0),
+    ), reverse=True)
     (score, reasons), best = ranked[0]
     return best, score, reasons
 
@@ -961,8 +983,12 @@ Return exactly:
             messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
             temperature=0.0,
             max_tokens=220,
+            response_format={"type": "json_object"},
         )
-        raw = resp.choices[0].message.content.strip()
+        raw = resp.choices[0].message.content or ""
+        if not isinstance(raw, str):
+            raw = str(raw)
+        raw = raw.strip()
     else:
         # Deterministic fallback: prefer a general manufacturer privacy policy
         # over a specialized service/product notice.
