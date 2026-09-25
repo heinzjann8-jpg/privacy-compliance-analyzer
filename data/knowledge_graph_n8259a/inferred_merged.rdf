@@ -4143,19 +4143,409 @@ Learn more.</policy_description>
 
     <owl:NamedIndividual rdf:about="http://example.org/onto.owl#Govee">
         <rdf:type rdf:resource="http://example.org/onto.owl#Manufacturer"/>
-        <policy_description>Govee - Making Life Smarter           Govee - Making Life Smarter                       EnglishPrivacy Govee protects personal information and will never sell, rent or share your information in any way and under any situation without your own authorization. Cookies and IP Addresses Govee is firmly committed to our customers&apos; privacy. Cookies are a small piece of information stored by your internet browser to your computer&apos;s hard drive.Your browser is usually set up to initially accept cookies. If you set your browser to reject cookies, the site will not be able to recognize your account and anypersonalization. We do not and cannot use cookies to gather your confidential information that may be stored on your hard drive. Third Party advertisers also help us display tailored content to our customers and serve ads on our behalf. These advertisers may also utilize cookies and/or web beacons to measure effectiveness, efficiencies, etc. of the sites. Third party links Occasionally, at our discretion, we may include or offer third party products or services on our website. These third party sites have separate and independent privacy policies. We therefore have no responsibility or liability for the content and activities of these linked sites. Nonetheless, we seek to protect the integrity of our site and welcome any feedback about these sites. California Online Privacy Protection Act Compliance Because we value your privacy we have taken the necessary precautions to be in compliance with the California Online Privacy Protection Act. We therefore willnot distribute your personal information to outside parties without your consent.As part of the California Online Privacy Protection Act, all users of our site may make any changes to their information at anytime by logging into their control panel and going to the &apos;Edit Profile&apos; page. Childrens Online Privacy Protection Act Compliance We are in compliance with the requirements of COPPA (Childrens Online Privacy Protection Act), we do not collect any information from anyone under 13 years of age. Our website, products and services are all directed to people who are at least 13 years old or older. COMPANY RGBIC About Us Community Terms of Use Privacy Policy Compliance Statement SUPPORT Download Govee App FAQ Rapid Replacement support@govee.com US / CA +1 (855) 925 3570 Mon-Fri 9 AM-5 PM (EST)MEDIA Blogs Partner with Us SUBSCRIBEAccess exclusive offers, news and more Your Country...SUBSCRIBE FOLLOW US Copyright © 2021 Intellirocks Tech. Co., Ltd. All rights reserved.</policy_description>
-        <AssessmentScore rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">72.22</AssessmentScore>
+        <policy_description>Privacy Policy – Govee | Govee US Skip to content Fast Free Shipping 30-Day Money Back Guarantee Lifetime Customer Support Education Discount Fast Free Shipping 30-Day Money Back Guarantee Lifetime Customer Support Education Discount outdoor lights indoor lights shop by room deals explore support community Get points on first login Enjoy $5 off your first order when you subscribe Log In Get points on first login Enjoy $5 off your first order when you subscribe Log In Privacy Policy Privacy Govee protects personal information and will never sell, rent or share your information in any way and under any situation without your own authorization. Cookies and IP Addresses Govee is firmly committed to our customers&apos; privacy. Cookies are a small piece of information stored by your internet browser to your computer&apos;s hard drive.Your browser is usually set up to initially accept cookies. If you set your browser to reject cookies, the site will not be able to recognize your account and anypersonalization. We do not and cannot use cookies to gather your confidential information that may be stored on your hard drive. Third Party advertisers also help us display tailored content to our customers and serve ads on our behalf. These advertisers may also utilize cookies and/or web beacons to measure effectiveness, efficiencies, etc. of the sites. Third party links Occasionally, at our discretion, we may include or offer third party products or services on our website. These third party sites have separate and independent privacy policies. We therefore have no responsibility or liability for the content and activities of these linked sites. Nonetheless, we seek to protect the integrity of our site and welcome any feedback about these sites. California Online Privacy Protection Act Compliance Because we value your privacy we have taken the necessary precautions to be in compliance with the California Online Privacy Protection Act. We therefore willnot distribute your personal information to outside parties without your consent.As part of the California Online Privacy Protection Act, all users of our site may make any changes to their information at anytime by logging into their control panel and going to the &apos;Edit Profile&apos; page. Childrens Online Privacy Protection Act Compliance We are in compliance with the requirements of COPPA (Childrens Online Privacy Protection Act), we do not collect any information from anyone under 13 years of age. Our website, products and services are all directed to people who are at least 13 years old or older. Information collection statement No information will be collected for customers who only visit the store.govee.com Customer who placed the order need to fill name, email address, delivery address, zip code and payment account. For the above information, we will only send customers order information and promotional activities in the store via email. Contact info 📧 support@govee.com 📲 US/CA +1 (855) 925-3570 Mon-Fri 9AM-5PM (EST) close close get $5 off your first order Get It Now! I agree to the Terms of Service and Privacy Policy . Subscribe to our newsletter now to get: 1. $5 off Coupon Code 2. 100 Govee Store Points 3. Updates on new product arrivals, special offers, and exclusive events. You can unsubscribe at any time.</policy_description>
+        <AssessmentScore rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">75.00</AssessmentScore>
         <AssessmentScoreCalifornia rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">100.00</AssessmentScoreCalifornia>
-        <AssessmentScoreNISTIR8259 rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">58.33</AssessmentScoreNISTIR8259>
+        <AssessmentScoreNISTIR8259 rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">62.50</AssessmentScoreNISTIR8259>
         <AssessmentScoreOregon rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">100.00</AssessmentScoreOregon>
-        <AssessmentScorePublicLaw116207 rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">56.52</AssessmentScorePublicLaw116207>
+        <AssessmentScorePublicLaw116207 rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">60.87</AssessmentScorePublicLaw116207>
         <StatutesFoundCalifornia rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">12</StatutesFoundCalifornia>
-        <StatutesFoundNISTIR8259 rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">14</StatutesFoundNISTIR8259>
+        <StatutesFoundNISTIR8259 rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">15</StatutesFoundNISTIR8259>
         <StatutesFoundOregon rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">13</StatutesFoundOregon>
-        <StatutesFoundPublicLaw116207 rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">13</StatutesFoundPublicLaw116207>
+        <StatutesFoundPublicLaw116207 rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">14</StatutesFoundPublicLaw116207>
+        <appliesToState>CA</appliesToState>
+        <appliesToState>US_FED</appliesToState>
+        <checkedAt rdf:datatype="http://www.w3.org/2001/XMLSchema#dateTime">2026-07-24T06:32:39+00:00</checkedAt>
+        <hasPreviousPolicy>[2026-09-25T04:37:12+00:00] Privacy
+Govee protects personal information and will never sell, rent or share your information in any way and under any situation without your own authorization.
+
+Cookies and IP Addresses
+Govee is firmly committed to our customers&apos; privacy. Cookies are a small piece of information stored by your internet browser to your computer&apos;s hard drive.Your browser is usually set up to initially accept cookies. If you set your browser to reject cookies, the site will not be able to recognize your account and anypersonalization. We do not and cannot use cookies to gather your confidential information that may be stored on your hard drive. Third Party advertisers also help us display tailored content to our customers and serve ads on our behalf. These advertisers may also utilize cookies and/or web beacons to measure effectiveness, efficiencies, etc. of the sites.
+
+Third party links
+Occasionally, at our discretion, we may include or offer third party products or services on our website. These third party sites have separate and independent privacy policies. We therefore have no responsibility or liability for the content and activities of these linked sites. Nonetheless, we seek to protect the integrity of our site and welcome any feedback about these sites.
+
+California Online Privacy Protection Act Compliance
+Because we value your privacy we have taken the necessary precautions to be in compliance with the California Online Privacy Protection Act. We therefore willnot distribute your personal information to outside parties without your consent.As part of the California Online Privacy Protection Act, all users of our site may make any changes to their information at anytime by logging into their control panel and going to the &apos;Edit Profile&apos; page.
+
+Childrens Online Privacy Protection Act Compliance
+We are in compliance with the requirements of COPPA (Childrens Online Privacy Protection Act), we do not collect any information from anyone under 13 years of age. Our website, products and services are all directed to people who are at least 13 years old or older.
+
+Information collection statement
+No information will be collected for customers who only visit the store.govee.com
+Customer who placed the order need to fill name, email address, delivery address, zip code and payment account. For the above information, we will only send customers order information and promotional activities in the store via email.</hasPreviousPolicy>
+        <hasPreviousPolicy>[2026-09-25T04:39:27+00:00] Introduction
+
+Welcome to Govee website services! Please make sure that you are an adult when you start using the website services. When you use our website services, we may collect and use information about you. We attach great importance to the protection of users&apos; privacy and personal information. We also truly understand the importance of personal information to you and we will spare no efforts to keep your personal information safe and reliable. We therefore pledge:
+
+I) We will be transparent about the different types of information that we collect and how we use it.
+
+II) Except at your request or for the provision of website services, we will seek your permission before sharing your personal information with third parties and will only do so when we are confident that they will provide you with additional services that are favored.
+
+III) We will implement data security measures for your data security and protect Govee website services from unauthorized access.
+
+ 
+
+Through this Policy, we intend to explain to you how we collect, use, save, share and transfer such information when you use our website services and the methods we provide you to access, update, delete and protect such information. Please read this Policy carefully and make sure that you understand our rules for processing your personal information before accessing the website services. If you have any doubts, comments or suggestions during reading, please contact us at support@govee.com. If you disagree with any part of this Policy or the Terms of Service, please stop accessing or using our services. Access or use of our website service constitutes your acceptance of our Terms of Service and Privacy Policy.
+
+ 
+
+This Privacy Policy will help you understand the following:
+1. Application Scope
+2. How We Collect and Use Your Personal Information
+3. Information Sharing
+4. Information Security and Storage
+5. Your Rights as Data Subject 
+6. Cookies and Similar Tracking Technologies 
+7. Other Matters to be Prompted Involving the Interests of Users and Disclaimers
+8. Policy Update
+9. Contact Us
+
+
+
+1. Application Scope
+This Privacy Policy (&quot;Policy&quot;) applies to the Govee website services provided to you by Govee Moments Trading Limited (hereinafter referred to as &quot;“we&quot;”), including but not limited to web browsing, product purchases, and related extended features. It explains how we collect, use, share, and process your personal information.
+
+ 
+
+Please note that, in addition to Govee website services, we may also provide you with services such as product purchasing, smart device control, and management through our mobile application or other means if you require them. If a specific product and/or service we offer has a separate Privacy Policy, that Privacy Policy shall take precedence for such product and/or service.
+
+ 
+
+2. How We Collect and Use Your Personal Information
+
+Personal information (which may be used interchangeably with the term “personal data” in this Privacy Policy) refers to any information recorded electronically or otherwise that can, either alone or in combination with other information, identify a specific natural person or reflect the activities of a specific natural person. This excludes information that has undergone anonymization. However, if the definition of personal information under the applicable personal information protection laws governing you differs from the above definition, the definition of personal information under the applicable personal information protection laws governing you shall prevail. 
+
+ 
+
+In accordance with the principles of legitimacy, legality and necessity, we will only collect and use your personal information voluntarily provided by you during or arising from your use of Govee website, as well as your relevant personal information obtained from third parties for the following purposes set forth herein. If we intend to use your personal information for other purposes not set forth herein or use information collected for specific purposes for other purposes, we will inform you in a reasonable manner and seek your consent again before use.
+
+ 
+
+2.1 To provide you with the following core functional services
+
+(1) Account registration, login and authentication
+
+To enable you to use Govee website services, we need to collect the following information to create your account: your email address, login password, nickname, and profile picture. If you log in and use Govee website services via social media accounts such as Facebook or Google, we will collect and use your name, username, profile picture, social media account, and any other information you may have in your third-party account profile. Email addresses and passwords are classified as sensitive personal information. The purpose of collecting this information is to authenticate user identities on Govee&apos;s website account servers and grant access permissions to Govee website services. 
+
+ 
+
+We will use your personal information as follows: the Govee website account username and login password authentication information you entered will be encrypted and transmitted to the Govee website account server for login authentication, which will not be stored locally by the app.
+
+If you do not provide such information or are not logged into your Govee website account, you will not be able to use certain Govee website services. After logging into the Govee website account, Govee website will automatically obtain the nickname and avatar of the account and display them on the website.
+
+(2) Goods/services information display and search
+
+In order to display goods or services to you, we will collect your device information (including the device name, device model, operating system and application versions, language settings, resolution, service provider network ID (PLMN)) and browser type to sort the appropriate goods or services to fit your device interface.
+
+ 
+
+Failure to provide such information may reduce your experience with Govee website.
+
+In order to provide you with services such as search history, browsing records, favorite goods, shopping cart or order goods/services display, we will collect your browsing data, search records, favorite records, follow records, addition to the shopping cart and order information.
+
+(3) Order fulfillment or processing
+
+When you settle the items in your shopping cart at Govee website, Govee website will generate an order for the goods you purchased. In order to complete the delivery, return, refund, sales tax determination and payment operations of the corresponding goods, we need to collect the following information about you:
+
+I) Your identity and contact information, such as name, telephone number and delivery address, as well as financial information or payment account information for delivery, return, refund, sales tax determination and payment operations.
+
+II) Transaction details in our services, such as return and refund details, gift card numbers and order history, to perform basic functions, including processing your payment and return requests, as well as keeping you informed of order status and transportation logistics.
+
+III) Location data based on IP address level, to customize your experience based on the appropriately displayed local website, language or user experience.
+
+IV) Invoice header, taxpayer identification number and receiver’s email address, if you want to issue an invoice.
+
+ 
+
+If you do not register and log in to a Govee website account, you may still use the basic purchasing features of this website as a guest. We will collect your name, email address, shipping address, postal code, and payment account information to complete the order transaction and deliver the goods. 
+
+(4) Problem feedback and product reviews
+
+When you use the “CONTACT US” feature on the Govee website, we will collect the information you provide, including your name, email address, order number, and issue description, to better assist you in resolving your concerns.
+
+When you use the AI chatbot service provided on the Govee website, we will collect our chat history with you, your user ID, and session ID. If necessary, we may also request your name and email address. 
+
+ 
+
+If you do not provide such information, it will not be as effective locating and solving the problems from your feedback.
+
+Additionally, if you post a product review after purchasing an item on the Govee website, we will collect your review information and display it on the corresponding product detail page.
+
+2.2 To provide you with add-on services
+
+To enable Govee website to provide Govee Point service, we need to collect the following information about you: user identifier, operating system and model.
+
+ 
+
+If you participate in sweepstakes, product trials, surveys, testing programs, or other activities on the Govee website, we may use your information such as nickname, profile picture, and email address. If you redeem physical good, you will need to provide your name, address, phone number, email address, and other information to complete the goods delivery and your data will be saved in the Govee website server.
+
+ 
+
+With your prior consent, we will send information to your provided email address regarding websites, applications, products, services, discounts, and other content that may be of interest to you. You may unsubscribe at any time by clicking the &quot;Unsubscribe&quot; link included in each email we send, or by contacting our online customer service at support@govee.com to cancel your subscription. After unsubscribing, we may still contact you via email when necessary (such as for order fulfillment purposes).
+
+ 
+
+If you do not provide such information, you will not be able to use the corresponding add-on services of Govee website normally, but other features will still be accessible.
+
+2.3 Service guarantee and optimization
+
+To support continuous improvement, research, development and testing of new services and functions, and to perform troubleshooting activities, we collect additional information in the following ways:
+
+ 
+
+We use Google Analytics to help us understand how customers use this website. You can read more about how Google uses your personal information here: https://www.google.com/intl/en/policies/privacy/. You can also opt out of Google Analytics here: https://tools.google.com/dlpage/gaoptout.
+
+ 
+
+We collect information through questionnaires, voting and other activities, such as users&apos; preference for the appearance of a device, their preference for functions and device installation locations. Participation in questionnaires and voting is voluntary, and generally does not identify individual users.
+
+ 
+
+3. Information Sharing
+
+We may share your personal information with the following types of third-party service providers. We strive to ensure that such third-party service providers will only use your data for provided purposes in compliance with our written instructions and control such use to the extent necessary.
+
+3.1 Data sharing within a Govee-based organization
+
+Govee and Intellirocks are part of a corporate organization with multiple legal entities, business processes, management structures, and technical systems. We may share your personal information with our associated group companies and, in some cases, with other affiliates of our corporate group for purposes of business maintenance and individualized continuity. We will ensure that your data is only used for the previously claimed purposes and control such use to the extent necessary.
+
+3.2 Data sharing for order payment and risk management
+
+After you place an order, we will provide payment settlement services and online transaction anti-fraud services through third-party payment institutions that partner with the Govee website (including UnionPay, NetsUnionNUCC, PayPal, Google Pay, Visa, AMEX, Discover, JCB and other payment channels, hereinafter referred to as &quot;Payment Institutions&quot;) and online transaction anti-fraud service providers (including Riskified, etc.). We need to share your personal information, such as order information and address on the Govee website, with these payment institutions and online transaction anti-fraud service providers we are collaborating with to complete the ordering and payment functions. When you use the payment function, the payment institutions and online trading anti-fraud service providers we are collaborating with will collect or verify your bank card (including savings card and credit card) and other necessary payment and verification-related personal information through their pages, so as to confirm your payment instructions and complete the payments, in which case the appropriate privacy policy of each payment institution and online trading anti-fraud service providers shall apply specifically. Your refusal to provide such information will prevent you from completing the order payment, but will not affect your use of other functions of Govee website.
+
+3.3 Data sharing for third-Party insurance services
+
+To enable third-party insurance service providers to offer you insurance services such as worry-free protection on the Govee website, we will share your personal information, including delivery address and email address, with third-party insurance service providers (including Seel).
+
+3.4 Data sharing for product logistic and storage
+
+After you place an order and complete the payment, or choose to obtain trial products and prizes, we, our affiliated parties and the third-party warehousing/logistics/distribution companies cooperating with us (hereinafter referred to as &quot;distribution companies&quot;) will complete the delivery of the order for you. You acknowledge and agree that we, our affiliated parties and the third-party warehousing/logistics/distribution companies cooperating with us will use your order information and personal information such as address in the above steps to ensure the safe delivery of the goods you ordered. Your refusal to provide such information will prevent you from receiving the product successfully, but will not affect your use of other functions of Govee website.
+
+3.5 Data sharing for marketing activity purposes
+
+We use the collected device information to help us screen for potential risks and fraud (particularly your IP address), and more broadly, to improve and optimize our website (for example, by analyzing how customers browse and interact with the website to assess the success of our marketing and advertising campaigns).
+
+ 
+
+We provide user email addresses to Google and Facebook for remarketing advertising purposes (for example, analyzing user groups by matching information in the Facebook user database with the provided user email addresses).
+
+ 
+
+We synchronize user email addresses to marketing tools such as Klaviyo, Privy, Smile, ReferralCandy, Bazaarvoice, and Judge.me.
+
+ 
+
+We use Shopify to power our online store. You can read more about how Shopify uses your personal information here: https://www.shopify.com/legal/privacy.
+
+3.6 Data sharing for IT systems and software services
+
+Govee website may share your personal data with IT systems and software providers cooperating with Govee website due to reasons such as using Web hosting services (including cloud storage), mobile app or software optimization services, customer relationship management software, E-mail services or system maintenance services. Your refusal to provide such information will hinder the normal functions of Govee website.
+
+3.7 Data sharing for legal reasons
+
+We may share personal data as required to: (I) comply with applicable laws or respond to, investigate or participate in effective legal proceedings and lawsuits, including those of law enforcement or government agencies. (II) execute or investigate potential violations of its Terms of Service or policies. (III) detect, prevent or investigate potential fraud, abuse or security concerns, including threats to the public. (IV) fulfill our commitments to corporate and social responsibility. (V) protect our rights and property and those of our clients. (VI) resolve disputes and perform agreements.
+
+3.8 Data sharing for corporate transactions
+
+In case of a merger, divestiture, reorganization, restructuring, dissolution or sale or transfer of certain assets, we may disclose personal information (including account information, wallet balance or points information) or all of our assets to buyers, potential buyers, subsidiaries or other successors of the company, whether as a going concern or as part of bankruptcy, liquidation or similar proceedings, and the personal information about the users of our services we hold is a transferred asset. You acknowledge and agree to our right to transfer or assign your personal information.
+
+3.9 Data sharing based on your consent
+We may disclose your personal information for any purpose with your consent.
+
+ 
+
+4. Information Security and Storage
+
+Govee cares about the security of your information and adopts physical, administrative, and technical protections to help maintain the integrity and security of all the information we collect and the information we share with service providers. The Internet is not an absolutely secure environment. We strongly recommend that you adopt secure methods and use complex passwords to help us ensure your account security. We also strongly recommend you not share your password with others, nor reuse passwords on our services that you have used on other websites or apps, as doing so would increase the likelihood of being a victim of a hacker attack or other malicious network behavior. If you believe that the security of your account or personal data has been compromised, please contact us immediately.
+
+ 
+
+When you access or use our services, your personal data may be processed or transmitted outside your country/region of residence. The data protection laws of such countries or jurisdictions may be different or less protective than those of your residence in some respects. If you do not wish to have your information transferred for processing or maintenance outside your country or jurisdiction of residence, you should immediately stop accessing or using the services. If you need more details about these transmissions and the protective measures we use to facilitate such transmissions, please contact us immediately.
+
+ 
+
+In addition, we can&apos;t 100% guarantee the security of our system as no security system is impermeable. In case of a personal information security incident, we will, as required by laws and regulations, inform you of: the basic situation and possible impacts of the security incident, the disposal measures we have taken or will take, the suggestions for you to prevent and reduce risks independently, and the remedial measures available to you. We will inform you of the incident by email, SMS, push notification, etc. When it is difficult to inform the subjects of personal information on an individual basis, we will issue an announcement in a reasonable and effective way. In addition, we will report the disposal of personal information security incidents as required by the regulatory authorities.
+
+ 
+
+5. Your Rights as Data Subject
+
+In accordance with applicable laws, you are entitled to certain rights in relation to personal data, including the right to request for access, correction, modification, deletion, withdrawal and transfer of personal data to other service providers and the right to refuse to have the data used for specific purposes. If you wish to exercise these rights, please contact Govee customer service at support@govee.com for assistance.
+
+ 
+
+If you wish to delete your account and data, you may also exercise this right via the account deletion feature available on the Govee website. Prior to submitting your deletion request, please acknowledge and agree to the following terms:
+
+ 
+
+5.1 Scope of Application
+
+Your deletion request shall only apply to, and simultaneously take effect on, the govee.com and goveelife.com sites. Since the account architectures operate independently, your account, data, and access privileges on community.govee.com will remain entirely unaffected by this deletion and will be fully retained.
+
+ 
+
+5.2 Processing Cycle and Cooling-off Period Mechanism
+
+To ensure transaction fulfillment security and mitigate potential fraud risks, your account deletion request will be processed as follows:
+
+ 
+
+• 10-Day Cooling-off Period for Users with Purchase History: If you have prior order records, the system will initiate a 10-day cooling-off period upon your request submission. During this period, your account will not be archived or restricted, and you can still log in and utilize account features normally. However, to safeguard cross-border logistics and after-sales fulfillment, the occurrence of any of the following actions during this period will be deemed a rescission of your decision, and the system will automatically revoke your deletion request: a. Logging into the account and placing a new order; b. Logging into the account and applying for after-sales service on historical orders; or c. Placing an order using the account&apos;s registered email address without logging in. Users with no purchase history are exempt from this 10-day cooling-off period.
+
+ 
+
+• Physical Data Erasure: If a user with a purchase history does not trigger any revocation actions within the 10-day cooling-off period, or immediately after a user with no purchase history submits a request, the system will formally start the physical erasure procedure. Your personal information will be permanently deleted or thoroughly anonymized from our primary active databases within fourteen (14) days from the starting date.
+
+ 
+
+• Re-registration Restrictions: Once this account has been completely deleted, if you attempt to re-register using the same email address, the system will not reissue any new user promotions, welcome coupons, or related initial points benefits.
+
+ 
+
+5.3 Data Processing by Third-Party Partners
+
+Upon receipt of your valid deletion request, we will, in accordance with applicable laws, simultaneously issue data erasure instructions to selected third-party partners who assist in our store operations. Please note that essential transaction and delivery records involving payment gateways, logistics carriers, and warehousing partners are legally exempt from deletion obligations due to legal requirements and business compliance obligations regarding financial audits, tax compliance, anti-fraud measures, and cross-border logistics fulfillment. Such data will be independently processed and legally retained by the respective third parties. For further details, please refer to the independent privacy policies of each service provider.
+
+ 
+
+5.4 Data Anonymization and Publicly Posted Content
+
+Upon successful account deletion, your historical transaction records will be retained for statistical purposes, business analysis, and financial audits; however, they will undergo an irreversible anonymization process, rendering them technically impossible to re-identify, track, or associate with you personally. Concurrently, any product reviews you previously posted publicly will be de-identified (displayed as &quot;Anonymous&quot; or &quot;Verified Buyer&quot;). The text of the reviews may be retained to preserve the integrity and objectivity of the platform.
+
+ 
+
+5.5 Disposal of Virtual Assets and After-Sales Entitlements
+
+Once an account is deleted, it cannot be restored. All unconsumed assets stored under the account (including but not limited to membership points, tier benefits, vouchers, and coupons) will automatically lapse and cannot be restored or redeemed for cash. Following the deletion, you will no longer be able to initiate after-sales applications via self-service through the account. We will automatically compile the invoices for all orders purchased by you on Govee and GoveeLife websites and forward them to you as an email attachment. In the future, should you require after-sales assistance, this invoice will serve as your sole proof to enjoy after-sales services. If you hold a gift card, it will not lapse with the account deletion, as it is not tied to the account, and can continue to be used normally.
+
+ 
+
+5.6 Retention Based on Statutory Grounds
+
+Notwithstanding your deletion request, we are required to retain certain necessary financial records, tax declaration data, and transaction stubs within statutory mandatory retention periods pursuant to applicable laws (including but not limited to financial and tax laws, anti-money laundering regulations, and consumer protection laws across respective jurisdictions). Such legally retained data will be strictly isolated from our daily operational databases, accessed solely for compliance reviews, and shall never again be used for any commercial marketing or routine business purposes.
+
+ 
+
+6. Cookies and Similar Tracking Technologies
+6.1 Cookies
+
+Cookies are small text files sent to or accessed from your web browser or computer hard drive. Cookies generally contain the domain name (Internet location) from which the cookies originated, the cookie&apos;s &quot;life cycle&quot; (i.e., expiration time) and a unique number or similar identifier that is randomly generated. The cookies may also contain information about the device, such as user settings, browsing history, and activities while using the service.
+
+ 
+
+We and our third-party partners and providers use cookies and similar technologies to automatically collect certain personal data when you use Govee website services, in order to enhance navigation experience, analyze trends, manage the website, track user activities on the website, collect statistical information about our entire user base, and assist us in conducting marketing and customer service. You can adjust your preferences for our use of cookies and similar technologies by clicking on the &quot;Preferences&quot; settings in the Cookie settings pop-up window on the page. These Cookie preference management tools are specific to websites, devices, and browsers; therefore, when interacting with the specific website you are visiting, you need to change your preference settings on each device and browser you use. You may also stop us from collecting all information through website services by ceasing to use our website and services. Additionally, you can use your browser&apos;s built-in tools to disable or delete cookies, or exercise specific privacy choices by adjusting permissions in your mobile device or internet browser. If you choose to disable certain types of cookies, it may limit your use of certain features or functions of the Govee website.
+
+ 
+
+6.2 Other local storage
+
+We and some third parties may use other local storage technologies, such as local shared objects (also known as &quot;Flash cookies&quot;) and HTML5 local storage, in some products and services. Like cookies, these technologies store information on your devices and can record some information about your activities and preferences. However, these technologies may use a different media compared with those used for cookies. Therefore, you may not be able to control them using standard browser tools and settings.
+
+ 
+
+Additionally, our website uses pixels, which are HTML code snippets that load when a user visits the website or opens an email. They help track user behavior and activities. With tracking pixels, advertisers can obtain data for online marketing, website analytics, or email marketing purposes. If such data is analyzed in a specific manner, the data collected through these pixels can also be used for other purposes, such as retargeting/behavioral advertising. For example, Govee has deployed Facebook Pixel on the website. Facebook Pixel enables Facebook to match website visitors with their Facebook user accounts. If you wish to disable these tracking pixels, you can block tracking pixels from collecting your data in several ways:
+
+(1) Set your browser and email settings as strictly as possible to ensure that external graphics are only supported after permission is granted, and that HTML emails are not supported. Appropriate firewall settings can also achieve this.
+
+(2) Some browser extensions are available to make tracking pixels visible (such as PixelBlock, uBlock Origin, HTTPS Everywhere, etc.).
+
+(3) For more information on how targeted advertising works, you can visit the Network Advertising Initiative (&quot;NAI&quot;) educational webpage at https://thenai.org/about-online-advertising/how-does-it-work/.
+
+ 
+
+6.3 Do not track
+
+Except as required by law, we do not undertake to comply with the &quot;Do Not Track&quot; signal in your browser, as compliance therewith would prevent most of the tracking and disclosures as described herein.
+
+ 
+
+7. Other Matters to be Prompted Involving the Interests of Users and Disclaimers
+
+Without your prior consent, we have never and will never share, disclose, sell, lease or otherwise provide your personal data to other companies for their products or services promotion, except for the sharing of personal information that you authorize us to do so under this Policy, and we have never and will not &quot;sell&quot; your personal information.
+
+7.1 Links to third party websites
+
+Our App or websites may contain links redirecting to third-party websites, and this Policy does not apply to these third-party websites. If you click on the links to these websites, please note that they have their own privacy policies, and we have no responsibility or obligation for their policies. Before submitting any information to these websites, please check their respective privacy policies. In addition, our websites may include social media functions such as Facebook, Twitter and Pinterest buttons (such as &quot;Like,&quot; &quot;Tweet&quot; or &quot;Pin&quot;). These social media sites will automatically record information about your browsing behaviors every time you visit any site with a social media button, whether you tap the button or not. Your interactions with these functions are governed by the privacy policy of the company that provides them, not by ours. Please check your privacy settings separately on social media sites.
+
+7.2 Children&apos;s privacy
+
+Our services are not intended for children or minors under the age of 16 (as defined by applicable national laws), nor do we knowingly collect or maintain children&apos;s personal information. If you are a minor, please do not attempt to fill out our form or send us any personal information about you. If any minor provides us with personal information without the consent of his/her parent or guardian, the parent or guardian shall contact us immediately at support@govee.com to delete such personal information and cancel the subscription.
+
+ 
+
+If we discover that any minor has provided us with personal information, we will take immediate measures to remove such information from our files. As further described in our User Agreement, please do not upload or display photos of others, especially those of minors.
+
+7.3 Your privacy rights in California
+
+Pursuant to Section 1798.83 of the California Civil Code, California residents are entitled to request from us annually, free of charge, a copy of list of third parties to whom we have disclosed the personally identifiable information (as defined in the Code) of such California residents in the previous year, as well as the categories of personally identifiable information disclosed to such third parties. If you are a California resident and you wish to make such a request, please contact us at support@govee.com.
+
+7.4 Specific information subject to European data protection
+
+If you are located in EEA, Switzerland or the UK, your rights with respect to our processing of your personal data as a controller include, in particular:
+
+ 
+
+Access and/or port: you have the right to access the personal information that we retain about you and, in some cases, may request that such information be made available to you so that you can provide or &quot;port&quot; it to other providers.
+
+Delete: under certain circumstances, you have the right to delete the personal data that we retain about you (e.g. such data is no longer necessary for the purpose for which it was originally collected).
+
+Object to processing: under certain circumstances, you have the right to demand us to stop processing your personal data and/or stop sending marketing communications to you.
+
+Correct: you have the right to demand us to correct any inaccurate or incomplete personal data.
+
+Restrict processing: under certain circumstances, you have the right to request us to restrict the processing of your personal data (e.g., you believe that the personal data we retain about you is inaccurate or illegal).
+
+ 
+
+In order to exercise your rights, or in case of any other doubts about our use of your personal data, please send the request to the contact information specified in the &quot;Contact us&quot; section of this Privacy Statement. Please note that we may require you to provide us with additional information in order to confirm your identity and ensure that
+
+you have access to relevant personal data.
+
+You also have the right to file a complaint to the data protection agency. For more information, please contact your local data protection agency.
+
+ 
+
+8. Policy update
+
+We may update this Privacy Policy from time to time. If such change will result in material impairment of your rights and interests under this Privacy Policy, we will prompt you to a prominent position on the page before the change takes effect. In case of any change in the privacy protection guidelines for specific products and services regarding the processing purpose, processing method and types of personal information, your consent will be obtained again.
+
+ 
+
+You have the right to refuse to agree to this Privacy Policy update, but you also acknowledge and understand that if you refuse us to collect and process your personal information as necessary to realize the updated services or functions, we may not be able to provide you with the updated services or functions, or achieve the effect of updating the services.
+
+9. Contact us
+
+If you have any doubts, suggestions or comments about this Privacy Policy or our User Agreement, please contact us at support@govee.com. If you are in the United States or Canada, you may also contact us by calling +1 (855) 925-3570. Service hours are Monday to Friday, 9:00 AM to 5:00 PM (Eastern Standard Time).
+
+ 
+
+You can contact our representative under Article 27 by email at dpo@govee.com or by mail:
+
+GDPR Representative
+
+GOVEE MOMENTS (DE) HANDEL GmbH
+
+Address: ZunftstraBe 13 -Raum 205，50374 Erftstadt
+
+ 
+
+Data Protection Officer
+
+Contact Information: dpo@govee.com
+
+ 
+
+We will reply as soon as possible upon receipt of your request. In addition, if you think that our processing behavior violates your legitimate rights and interests of privacy and personal information, you have the right to complain and report to the corresponding regulatory authorities.
+
+ 
+
+Last revision date
+This Policy was last revised on [July 30, 2026] and entered into force thereafter.</hasPreviousPolicy>
         <policy_url>https://us.govee.com/pages/privacy-policy</policy_url>
         <userAddedManufacturer rdf:datatype="http://www.w3.org/2001/XMLSchema#boolean">true</userAddedManufacturer>
         <dcterms:created rdf:datatype="http://www.w3.org/2001/XMLSchema#dateTime">2026-06-11T03:50:14+00:00</dcterms:created>
+        <dcterms:modified rdf:datatype="http://www.w3.org/2001/XMLSchema#dateTime">2026-09-25T04:39:27+00:00</dcterms:modified>
         <rdfs:label>Govee</rdfs:label>
     </owl:NamedIndividual>
     
